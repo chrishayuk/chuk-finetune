@@ -1,0 +1,12 @@
+[project]
+name = "chuk-finetune"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "accelerate>=1.3.0",
+    "datasets>=3.2.0",
+    "torch>=2.5.1",
+    "transformers>=4.48.1",
+]

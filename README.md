@@ -1,0 +1,1 @@
+uv run infer.py --prompt "Hello, how are you?" --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device cpu
