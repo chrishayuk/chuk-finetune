@@ -1,12 +1,23 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "chuk-finetune"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.3.0",
+    "colorama>=0.4.6",
     "datasets>=3.2.0",
     "torch>=2.5.1",
     "transformers>=4.48.1",
 ]
+description = "Add your description here"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+inference-cli = "cli.inference_cli:main"
