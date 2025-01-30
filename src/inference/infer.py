@@ -12,7 +12,10 @@ def strip_role_prefixes(line: str) -> str:
     Strips a leading role label like 'assistant', 'user', or 'system'
     (with optional ':' or newline) from a single line.
     """
+    # setup the regex pattern
     pattern = re.compile(r'^(assistant|user|system)\s*:?[\r\n]*', re.IGNORECASE)
+
+    # return the stripped pattern
     return pattern.sub('', line)
 
 def skip_repeated_line(line: str, known_lines: set) -> bool:
@@ -21,6 +24,7 @@ def skip_repeated_line(line: str, known_lines: set) -> bool:
     which represent all previous lines in the conversation 
     (system prompt, user messages, and past assistant messages).
     """
+    # strip the known lines
     return line.strip() in known_lines
 
 def filter_and_print_chunk(
@@ -36,14 +40,23 @@ def filter_and_print_chunk(
     If this is the very first chunk that actually contains text to print,
     we also print "Assistant: " as a prefix exactly once.
     """
+    # split lines
     lines = chunk.splitlines(keepends=True)
     result = []
+
+    # loop through each line
     for line in lines:
+        # strip roles from the line
         no_role = strip_role_prefixes(line)
+
+        # skip repeated lines
         if skip_repeated_line(no_role, known_lines):
             continue
+
+        # add
         result.append(no_role)
 
+    # cleanup
     cleaned = "".join(result)
 
     # If we haven't yet printed anything this turn, print "Assistant: " once
@@ -51,6 +64,7 @@ def filter_and_print_chunk(
         print("Assistant: ", end="", flush=True)
         first_chunk_printed[0] = True
 
+    # print
     print(cleaned, end="", flush=True)
 
 def final_cleanup(full_text: str, known_lines: set) -> str:
