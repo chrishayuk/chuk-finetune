@@ -1,4 +1,4 @@
-# device_selection.py
+# src/device_selection.py
 import torch
 
 class DeviceSelector:

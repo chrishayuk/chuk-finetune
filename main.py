@@ -1,77 +1,65 @@
+import torch
 import numpy as np
-from datasets import load_dataset
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-    TrainingArguments,
-    Trainer
-)
-from sklearn.metrics import accuracy_score
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    return {"accuracy": accuracy_score(labels, predictions)}
+# Import GRPO trainer, reward function, and prompt renderer
+from src.train.grpo_trainer import train_grpo
+from src.verifiers.response_verifier import calculate_reward
+from src.prompt_renderer import PromptRenderer
+from src.device_selection import DeviceSelector
 
 def main():
-    # Load a small dataset for demonstration
-    dataset = load_dataset("glue", "mrpc")
+    print("[INFO] Loading model and tokenizer...")
+    model_name = "Qwen/Qwen2.5-3B"
 
-    # Download a pre-trained tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    base_model = AutoModelForCausalLM.from_pretrained(model_name)
+    ref_model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    # Tokenise the dataset
-    def tokenize_function(example):
-        return tokenizer(
-            example["sentence1"],
-            example["sentence2"],
-            truncation=True,
-            padding="max_length",
-            max_length=128
-        )
+    # Select device (CUDA, MPS, or CPU)
+    device = DeviceSelector.get_preferred_device()
+    print(f"[INFO] Using device: {device}")
+    base_model.to(device)
+    ref_model.to(device)
+    ref_model.eval()
 
-    tokenised_dataset = dataset.map(tokenize_function, batched=True)
+    print("[INFO] Loading dataset...")
+    dataset_questions = [
+        "What is the capital of France?",
+        "Explain the concept of gravity.",
+        "How to bake a chocolate cake?",
+        "Tell me a joke about computers."
+    ]
 
-    # Prepare for PyTorch training
-    tokenised_dataset = tokenised_dataset.remove_columns(["sentence1", "sentence2", "idx"])
-    tokenised_dataset = tokenised_dataset.rename_column("label", "labels")
-    tokenised_dataset.set_format("torch")
+    print("[INFO] Rendering prompts using Jinja...")
+    rendered_prompts_list = PromptRenderer.render_prompts(dataset_questions, 'src/templates/prompt_template.jinja2', as_list=True)
 
-    train_dataset = tokenised_dataset["train"]
-    eval_dataset = tokenised_dataset["validation"]
+    # Print one example formatted prompt (for debugging)
+    print("\n[INFO] Example Rendered Individual Prompt:\n")
+    print(rendered_prompts_list[0])  # Debug: print first formatted prompt
 
-    # Load a pre-trained model for sequence classification
-    model = AutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased", num_labels=2)
+    print("[INFO] Setting up verifier...")
+    class MyVerifier:
+        def check(self, answer: str) -> bool:
+            return "paris" in (answer.lower() if answer else "")
 
-    # Define training arguments
-    training_args = TrainingArguments(
-        output_dir="./results",
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        learning_rate=2e-5,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        num_train_epochs=1,
-        weight_decay=0.01,
-        logging_steps=10,
-        logging_dir="./logs"
+    verifier = MyVerifier()
+
+    print("[INFO] Beginning GRPO training...")
+    train_grpo(
+        base_model=base_model,
+        ref_model=ref_model,
+        tokenizer=tokenizer,
+        verifier=verifier,
+        dataset=rendered_prompts_list,  # Pass list of formatted prompts
+        calculate_reward=calculate_reward,
+        device=device,
+        epochs=2,
+        batch_size=2,
+        G=2,
+        lr=1e-5,
+        verbose=True
     )
-
-    # Define the Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        compute_metrics=compute_metrics
-    )
-
-    # Train the model
-    trainer.train()
-
-    # Evaluate the model
-    eval_results = trainer.evaluate()
-    print("Evaluation results:", eval_results)
 
 if __name__ == "__main__":
     main()
