@@ -1,3 +1,4 @@
+# grpo_trainer.py
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
@@ -139,22 +140,18 @@ def train_grpo(
     """
     High-level training loop for GRPO.
     """
-    if device is None:
-        device = torch.device("cpu")  # default to CPU if none specified
-
-    # Move models to the desired device
-    base_model.to(device)
-    ref_model.to(device)
-    ref_model.eval()  # reference model is typically not trained
-
+    # load the dataset
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # setup the optimizer
     optimiser = AdamW(base_model.parameters(), lr=lr)
 
+    # put the base model in training mode
     base_model.train()
-
     if verbose:
         print("\n[INFO] Starting training...")
 
+    # perform the epochs
     for epoch in range(epochs):
         if verbose:
             print(f"\n[INFO] Epoch {epoch+1}/{epochs} in progress...")

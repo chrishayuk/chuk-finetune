@@ -35,3 +35,15 @@ The new mistral small models are fully supported
 ```bash
 uv run inference-cli --chat --model_name "Qwen/Qwen2.5-3B-instruct" --max_new_tokens 256 --device mlx
 ```
+
+## Training
+
+```bash
+uv run main.py --device mlx --model Qwen/Qwen2.5-3B
+```
+
+or
+
+```bash
+uv run main.py --device mps --model Qwen/Qwen2.5-3B
+```
