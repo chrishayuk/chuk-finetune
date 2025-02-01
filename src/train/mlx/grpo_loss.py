@@ -1,21 +1,28 @@
 # src/train/mlx/grpo_loss.py
-
 import numpy as np
 import mlx.core as mx
 
 def compute_advantages(rewards):
-    # Possibly handle zero std in the function
+    # get the rewards
     rewards = np.array(rewards, dtype=np.float32)
+
+    # get the mean
     mean = rewards.mean()
-    std = rewards.std()
-    if std < 1e-8:
+
+    # get standard deviation
+    raw_std = rewards.std()
+    
+    if raw_std < 1e-8:
         return np.zeros_like(rewards, dtype=np.float32)
     else:
-        return (rewards - mean) / (std + 1e-8)
+        return (rewards - mean) / (raw_std + 1e-8)
 
 def grpo_loss(logprobs_current, logprobs_old, advantages, kl_divergences,
               clip_range=0.2, kl_coeff=0.1):
-    # ratio = exp(current - old)
+    """
+    Computes the GRPO loss, which combines a clipped surrogate objective with a KL penalty.
+    """
+    # get the ratio
     ratios = mx.exp(logprobs_current - logprobs_old)
 
     # Surrogate objective
@@ -34,4 +41,5 @@ def grpo_loss(logprobs_current, logprobs_old, advantages, kl_divergences,
     # KL penalty
     kl_loss = kl_coeff * mx.mean(kl_divergences)
 
+    # return the loss
     return surrogate_loss + kl_loss

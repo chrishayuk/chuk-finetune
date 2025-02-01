@@ -13,16 +13,13 @@ def compute_advantages(rewards):
     mean = rewards.mean()
 
     # get standard deviation
-    std = rewards.std() + 1e-8  # Avoid division by zero
-
-    # subtract the mean from the rewards and divide by standard deviation
-    if std < 1e-8:
-        # All values basically the same, so normalised = all zeros
+    raw_std = rewards.std()
+    
+    if raw_std < 1e-8:
         return np.zeros_like(rewards, dtype=np.float32)
     else:
-        return (rewards - mean) / (std + 1e-8)
-
-
+        return (rewards - mean) / (raw_std + 1e-8)
+    
 def grpo_loss(logprobs_current, logprobs_old, advantages, kl_divergences, clip_range=0.2, kl_coeff=0.1):
     """
     Computes the GRPO loss, which combines a clipped surrogate objective with a KL penalty.
