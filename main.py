@@ -1,37 +1,42 @@
 # main.py
+
 import argparse
 
 # Our imports
-from src.prompt_renderer import PromptRenderer
-from src.model_utils import load_model_and_tokenizer
+from prompt_renderer import PromptRenderer
+from model_utils import load_model_and_tokenizer
+
+# >>>> IMPORTANT: Import from your unified GRPO trainer <<<<
+from src.train.unified_grpo_trainer import train_grpo
+from verifiers.response_verifier import calculate_reward
 
 def parse_arguments():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Load models via Torch or MLX for training.")
+    parser = argparse.ArgumentParser(
+        description="Load models via Torch or MLX for training."
+    )
+
     parser.add_argument(
         "--model",
         type=str,
         required=True,
         help="Model name or local path to load."
     )
+
     parser.add_argument(
         "--device",
         type=str,
         default=None,
-        help=(
-            "Device to use for training. "
-            "Use 'mlx' for Apple MLX, or 'cpu', 'cuda', 'mps' (Torch). "
-            "If None, Torch auto-selects (GPU if available, else CPU)."
-        )
+        help="Device to use for training. Use 'mlx' for Apple MLX, or 'cpu', 'cuda', 'mps' (Torch)."
     )
     return parser.parse_args()
 
 def load_models(model_name: str, device_override: str):
     """
-    Load base and reference models along with tokenizer, using either MLX or Torch.
-
+    Load base and reference models + tokenizer via either MLX or Torch
+    depending on device_override. 
     If device_override == 'mlx', we do MLX logic.
-    Otherwise, we do Torch logic (CPU, CUDA, MPS, etc.).
+    Otherwise, Torch logic.
     """
     print("[INFO] Loading base model & tokenizer...")
     base_model, tokenizer, device = load_model_and_tokenizer(
@@ -40,11 +45,11 @@ def load_models(model_name: str, device_override: str):
     )
 
     print("[INFO] Loading reference model...")
-    ref_model, _, ref_dev = load_model_and_tokenizer(
+    ref_model, _, _ = load_model_and_tokenizer(
         model_name_or_path=model_name,
         device_override=device_override
     )
-    # For Torch, we set the reference model to the same device (and eval mode)
+    # For Torch, set reference model device & eval
     if device_override != "mlx" and device is not None:
         ref_model.to(device)
         ref_model.eval()
@@ -74,12 +79,12 @@ def render_prompts(dataset):
     return rendered_prompts
 
 def main():
-    """Main function to load models, dataset, and prompts, and optionally do GRPO training."""
+    """Main function to load models, dataset, and prompts, then do GRPO training."""
     args = parse_arguments()
     print(f"[INFO] Loading model: {args.model}")
     print(f"[INFO] Device: {args.device or 'Auto-Detect (Torch)'}")
 
-    # 1) Load base and reference models
+    # 1) Load base & reference models + tokenizer
     base_model, ref_model, tokenizer, device = load_models(args.model, args.device)
 
     # 2) Load or create dataset
@@ -88,33 +93,29 @@ def main():
     # 3) Render prompts
     rendered_prompts = render_prompts(dataset)
 
-    # 4) (Optional) GRPO training
-    # -------------------------------------------------
-    from src.train.grpo_trainer import train_grpo
-    from src.verifiers.response_verifier import calculate_reward
-    
+    # 4) GRPO training
     class MyVerifier:
         def check(self, answer: str) -> bool:
             return "paris" in (answer.lower() if answer else "")
-    
+
     verifier = MyVerifier()
-    
+
     print("[INFO] Beginning GRPO training...")
-    train_grpo(
+    mean_loss = train_grpo(
         base_model=base_model,
         ref_model=ref_model,
         tokenizer=tokenizer,
         verifier=verifier,
         dataset=rendered_prompts,
         calculate_reward=calculate_reward,
-        device=device,
+        lr=1e-5,
         epochs=2,
         batch_size=2,
         G=2,
-        lr=1e-5,
+        device=args.device,
         verbose=True
     )
-    # -------------------------------------------------
+    print(f"[INFO] Training complete. Mean loss: {mean_loss:.4f}")
 
 if __name__ == "__main__":
     main()
