@@ -3,8 +3,11 @@ import time
 import threading
 from transformers import TextIteratorStreamer
 
+# model imports
 from model_utils import load_model_and_tokenizer
-from inference.stats_collector import StatsCollector
+
+# inference imports
+from inference.torch.stats_collector import StatsCollector
 from inference.chat_template import build_chat_prompt
 from inference.text_utils import final_cleanup
 from inference.stream_handler import StreamHandler

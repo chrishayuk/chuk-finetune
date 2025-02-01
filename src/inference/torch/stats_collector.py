@@ -1,4 +1,4 @@
-# src/inference/stats_collector.py
+# src/inference/torch/stats_collector.py
 import torch
 from colorama import init, Fore, Style
 

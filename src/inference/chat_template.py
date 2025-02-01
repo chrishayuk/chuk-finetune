@@ -1,5 +1,4 @@
 # src/inference/chat_template.py
-
 def build_chat_prompt(
     tokeniser,
     system_prompt: str = None,
@@ -60,4 +59,5 @@ def build_chat_prompt(
         add_generation_prompt=add_generation_prompt
     )
 
+    # return the text
     return text

@@ -2,11 +2,9 @@
 import logging
 from typing import List
 
-# Torch-based approach
-from inference.torch_inference import execute_chat_generation
-
-# MLX-based approach
-from inference.mlx_inference import mlx_chat_generation
+# inference handlers
+from inference.torch.torch_inference import execute_chat_generation
+from inference.mlx.mlx_inference import mlx_chat_generation
 
 def run_inference(
     model_name: str,
