@@ -1,6 +1,6 @@
 # src/inference/chat_template.py
 def build_chat_prompt(
-    tokeniser,
+    tokenizer,
     system_prompt: str = None,
     user_messages: list = None,
     assistant_messages: list = None,
@@ -53,7 +53,7 @@ def build_chat_prompt(
             messages.append({"role": "assistant", "content": assistant_msgs[i]})
 
     # Let the tokeniser handle final prompt formatting
-    text = tokeniser.apply_chat_template(
+    text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=add_generation_prompt

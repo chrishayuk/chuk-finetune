@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
+# src/cli/inference_cli.py
 import argparse
 import sys
 
-# imports
-from inference.infer import run_inference
+# Unified loading/inference (preloaded approach)
+from inference.infer import load_inference_model, run_inference
 
 def parse_args():
     """Parse command-line arguments for inference."""
@@ -38,14 +40,16 @@ def parse_args():
     return parser.parse_args()
 
 def main():
-    # parse arguments
     args = parse_args()
 
-    # get system prompt and device
     system_prompt = args.system_prompt
     device = args.device
 
-    # We maintain a simple conversation history
+    # 1) Load the model once at the start (Torch or MLX)
+    print(f"[INFO] Loading model: {args.model_name} (device={device or 'auto'})")
+    model, tokenizer, is_mlx = load_inference_model(args.model_name, device)
+
+    # We'll keep track of the conversation history
     user_messages = []
     assistant_messages = []
 
@@ -54,19 +58,19 @@ def main():
         single_prompt = args.prompt or "Who is Ada Lovelace?"
         user_messages.append(single_prompt)
 
-        # Call the unified inference function
+        # 2) Use run_inference with the preloaded model
         response = run_inference(
-            model_name=args.model_name,
+            model=model,
+            tokenizer=tokenizer,
+            is_mlx=is_mlx,
             system_prompt=system_prompt,
             user_messages=user_messages,
             assistant_messages=assistant_messages,
-            max_new_tokens=args.max_new_tokens,
-            device=device
+            max_new_tokens=args.max_new_tokens
         )
         print(f"\nAssistant: {response}")
-
     else:
-        # Interactive chat mode
+        # Chat mode
         print("Entering chat mode. Type 'exit' or 'quit' to end.\n")
         while True:
             try:
@@ -80,20 +84,20 @@ def main():
                 break
 
             user_messages.append(user_input)
-
-            # Call the unified inference function
             response = run_inference(
-                model_name=args.model_name,
+                model=model,
+                tokenizer=tokenizer,
+                is_mlx=is_mlx,
                 system_prompt=system_prompt,
                 user_messages=user_messages,
                 assistant_messages=assistant_messages,
-                max_new_tokens=args.max_new_tokens,
-                device=device
+                max_new_tokens=args.max_new_tokens
             )
             cleaned_reply = response.strip()
             if cleaned_reply:
                 assistant_messages.append(cleaned_reply)
                 print(f"Assistant: {cleaned_reply}\n")
+
         print("Chat session ended.")
 
 if __name__ == "__main__":
