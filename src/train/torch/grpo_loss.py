@@ -1,4 +1,4 @@
-# src/train/grpo_loss
+# src/train/torch/grpo_loss.py
 import torch
 import numpy as np
 
@@ -16,7 +16,12 @@ def compute_advantages(rewards):
     std = rewards.std() + 1e-8  # Avoid division by zero
 
     # subtract the mean from the rewards and divide by standard deviation
-    return (rewards - mean) / std
+    if std < 1e-8:
+        # All values basically the same, so normalised = all zeros
+        return np.zeros_like(rewards, dtype=np.float32)
+    else:
+        return (rewards - mean) / (std + 1e-8)
+
 
 def grpo_loss(logprobs_current, logprobs_old, advantages, kl_divergences, clip_range=0.2, kl_coeff=0.1):
     """

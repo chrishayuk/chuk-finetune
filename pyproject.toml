@@ -11,6 +11,7 @@ dependencies = [
     "colorama>=0.4.6",
     "datasets>=3.2.0",
     "mlx-lm>=0.21.1",
+    "pytest>=8.3.4",
     "torch>=2.5.1",
     "transformers>=4.48.1",
 ]

@@ -90,30 +90,30 @@ def main():
 
     # 4) (Optional) GRPO training
     # -------------------------------------------------
-    # from src.train.grpo_trainer import train_grpo
-    # from src.verifiers.response_verifier import calculate_reward
-    #
-    # class MyVerifier:
-    #     def check(self, answer: str) -> bool:
-    #         return "paris" in (answer.lower() if answer else "")
-    #
-    # verifier = MyVerifier()
-    #
-    # print("[INFO] Beginning GRPO training...")
-    # train_grpo(
-    #     base_model=base_model,
-    #     ref_model=ref_model,
-    #     tokenizer=tokenizer,
-    #     verifier=verifier,
-    #     dataset=rendered_prompts,
-    #     calculate_reward=calculate_reward,
-    #     device=device,
-    #     epochs=2,
-    #     batch_size=2,
-    #     G=2,
-    #     lr=1e-5,
-    #     verbose=True
-    # )
+    from src.train.grpo_trainer import train_grpo
+    from src.verifiers.response_verifier import calculate_reward
+    
+    class MyVerifier:
+        def check(self, answer: str) -> bool:
+            return "paris" in (answer.lower() if answer else "")
+    
+    verifier = MyVerifier()
+    
+    print("[INFO] Beginning GRPO training...")
+    train_grpo(
+        base_model=base_model,
+        ref_model=ref_model,
+        tokenizer=tokenizer,
+        verifier=verifier,
+        dataset=rendered_prompts,
+        calculate_reward=calculate_reward,
+        device=device,
+        epochs=2,
+        batch_size=2,
+        G=2,
+        lr=1e-5,
+        verbose=True
+    )
     # -------------------------------------------------
 
 if __name__ == "__main__":

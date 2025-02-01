@@ -5,8 +5,8 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 
 # imports
-from train.grpo_utils import gather_logprobs, gather_kl_divergence
-from train.grpo_loss import compute_advantages, grpo_loss
+from train.torch.grpo_utils import gather_logprobs, gather_kl_divergence
+from train.torch.grpo_loss import compute_advantages, grpo_loss
 
 def train_step(
     base_model,
