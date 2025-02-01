@@ -1,104 +1,25 @@
+# stc/inference/inference_flow.py
 import time
 import threading
-import re
 from transformers import TextIteratorStreamer
 
 from model_utils import load_model_and_tokeniser
 from inference.stats_collector import StatsCollector
 from inference.chat_template import build_chat_prompt
+from inference.text_utils import final_cleanup
+from inference.stream_handler import StreamHandler
 
-def strip_role_prefixes(line: str) -> str:
+def prepare_prompt_inputs(tokeniser, system_prompt: str, user_messages: list,
+                          assistant_messages: list, device, stats: StatsCollector):
     """
-    Strips a leading role label like 'assistant', 'user', or 'system'
-    (with optional ':' or newline) from a single line.
+    Builds and encodes the conversation prompt for the model.
+
+    The function uses the chat template to construct a complete prompt that
+    includes the system, user, and assistant messages. It then encodes this
+    prompt into the format required by the model and records the prompt statistics.
     """
-    # setup the regex pattern
-    pattern = re.compile(r'^(assistant|user|system)\s*:?[\r\n]*', re.IGNORECASE)
-
-    # return the stripped pattern
-    return pattern.sub('', line)
-
-def skip_repeated_line(line: str, known_lines: set) -> bool:
-    """
-    Returns True if 'line' (trimmed) exactly appears in known_lines,
-    which represent all previous lines in the conversation 
-    (system prompt, user messages, and past assistant messages).
-    """
-    # strip the known lines
-    return line.strip() in known_lines
-
-def filter_and_print_chunk(
-    chunk: str,
-    known_lines: set,
-    first_chunk_printed: list
-):
-    """
-    Splits the chunk by newlines, strips role labels, 
-    and then skips any line that exactly matches known conversation lines.
-    Prints only the newly generated text.
-
-    If this is the very first chunk that actually contains text to print,
-    we also print "Assistant: " as a prefix exactly once.
-    """
-    # split lines
-    lines = chunk.splitlines(keepends=True)
-    result = []
-
-    # loop through each line
-    for line in lines:
-        # strip roles from the line
-        no_role = strip_role_prefixes(line)
-
-        # skip repeated lines
-        if skip_repeated_line(no_role, known_lines):
-            continue
-
-        # add
-        result.append(no_role)
-
-    # cleanup
-    cleaned = "".join(result)
-
-    # If we haven't yet printed anything this turn, print "Assistant: " once
-    if not first_chunk_printed[0] and cleaned.strip():
-        print("Assistant: ", end="", flush=True)
-        first_chunk_printed[0] = True
-
-    # print
-    print(cleaned, end="", flush=True)
-
-def final_cleanup(full_text: str, known_lines: set) -> str:
-    """
-    After all chunks have been received, remove any leftover role labels and 
-    any lines exactly matching known conversation lines from the final text.
-    Returns only the truly new assistant text.
-    """
-    # First remove any leftover role labels at start of lines
-    pattern_roles = re.compile(r'^(assistant|user|system)\s*:?[\r\n]+', re.MULTILINE | re.IGNORECASE)
-    text_no_roles = pattern_roles.sub('', full_text)
-
-    # Then remove lines that match known_lines exactly
-    lines = text_no_roles.splitlines()
-    final_lines = []
-    for line in lines:
-        if line.strip() in known_lines:
-            continue
-        final_lines.append(line)
-
-    return "\n".join(final_lines).strip()
-
-def prepare_input(
-    tokeniser,
-    system_prompt: str,
-    user_messages: list,
-    assistant_messages: list,
-    device,
-    stats: StatsCollector
-):
-    """
-    Builds and encodes the conversation prompt from system, user, and assistant messages.
-    """
-    text = build_chat_prompt(
+    # Build the prompt text from the conversation components
+    prompt_text = build_chat_prompt(
         tokeniser=tokeniser,
         system_prompt=system_prompt,
         user_messages=user_messages,
@@ -106,95 +27,97 @@ def prepare_input(
         add_generation_prompt=True
     )
 
+    # Encode the prompt text and record the time taken for encoding
     encode_start = time.time()
-    model_inputs = tokeniser([text], return_tensors="pt").to(device)
+    model_inputs = tokeniser([prompt_text], return_tensors="pt").to(device)
     encode_end = time.time()
 
+    # Record the token count and the elapsed time for prompt encoding
     prompt_token_count = model_inputs.input_ids.shape[1]
     stats.record_prompt_stats(
         token_count=prompt_token_count,
         elapsed_time=(encode_end - encode_start)
     )
-
+    # Reset the peak memory stats prior to generation
     stats.reset_peak_memory_stats()
+
     return model_inputs
 
-def run_inference(
-    model,
-    model_inputs,
-    tokeniser,
-    device,
-    stats,
-    max_new_tokens: int,
-    known_lines: set
-):
+def stream_generated_text(model, model_inputs, tokeniser, device, stats, max_new_tokens: int, known_lines: set):
     """
-    Streams tokens chunk-by-chunk, filtering out repeated lines in real time,
-    while still collecting the raw output for final cleanup.
+    Streams tokens generated by the model in chunks, filtering out repeated lines.
 
-    We also handle printing "Assistant: " for the first chunk that contains text.
+    The function initialises a streaming mechanism using TextIteratorStreamer, starts the
+    generation in a separate thread, and processes each incoming chunk. It also records the
+    generation statistics and returns the complete raw text generated.
     """
+    # Create a streamer to handle output tokens, skipping special tokens
     streamer = TextIteratorStreamer(tokeniser, skip_special_tokens=True)
     gen_token_count = 0
-    generated_text_pieces = []
+
+    # Create a StreamHandler to process and print each chunk of text as it arrives
+    stream_handler = StreamHandler(known_lines)
 
     def _generate_thread():
+        # Generate tokens in a separate thread to allow streaming
         model.generate(
             **model_inputs,
             max_new_tokens=max_new_tokens,
             streamer=streamer
         )
 
+    # Start the generation thread
     generation_thread = threading.Thread(target=_generate_thread)
     generation_start = time.time()
     generation_thread.start()
 
-    # A mutable flag (single-element list) to track if we've printed "Assistant: " yet
-    first_chunk_printed = [False]
-
-    # Stream chunks as they arrive
+    # Process each chunk as it is streamed by the model
     for raw_chunk in streamer:
-        generated_text_pieces.append(raw_chunk)
-        filter_and_print_chunk(raw_chunk, known_lines, first_chunk_printed)
+        # process chunk
+        stream_handler.process_chunk(raw_chunk)
+
+        # Count the tokens generated in this chunk (excluding any special tokens)
         gen_token_count += len(tokeniser.encode(raw_chunk, add_special_tokens=False))
 
+    # Wait for the generation thread to finish
     generation_thread.join()
     generation_end = time.time()
 
-    # Print a final newline for neatness
-    print()
+    print()  # Print a final newline for neat output
 
+    # Record the peak memory usage and generation statistics
     stats.capture_peak_memory()
     stats.record_generation_stats(
         token_count=gen_token_count,
         elapsed_time=(generation_end - generation_start)
     )
 
-    # Combine raw chunks for final cleaning
-    return "".join(generated_text_pieces)
+    # Return the full raw text generated during the streaming process
+    return stream_handler.get_full_text()
 
-def run_inference_flow(
-    model_name: str,
-    system_prompt: str,
-    user_messages: list,
-    assistant_messages: list,
-    max_new_tokens: int,
-    device_override: str = None
-):
+def execute_chat_generation(model_name: str, system_prompt: str, user_messages: list,
+                            assistant_messages: list, max_new_tokens: int,
+                            device_override: str = None):
     """
-    The main routine to:
-      1) Load model
-      2) Build the prompt
-      3) Stream the model's reply (filtered in real time)
-      4) Return a final cleaned string for conversation history
-    """
+    Executes the full chat generation flow.
 
+    This main routine performs the following:
+      1. Loads the model and tokeniser.
+      2. Prepares the prompt inputs from the conversation history.
+      3. Streams the generated text in real time.
+      4. Cleans the final output by removing repeated conversation lines.
+      5. Prints a summary of the generation statistics.
+
+    The cleaned final text is returned for use in the conversation history.
+    """
+    # Initialise the statistics collector
     stats = StatsCollector(None)
+    # Load the model and tokeniser, possibly overriding the device if required
     model, tokeniser, device = load_model_and_tokeniser(model_name, device_override)
     stats.device = device
 
-    # Prepare the input
-    model_inputs = prepare_input(
+    # Prepare the inputs for the model based on the conversation prompt
+    model_inputs = prepare_prompt_inputs(
         tokeniser=tokeniser,
         system_prompt=system_prompt,
         user_messages=user_messages,
@@ -203,17 +126,13 @@ def run_inference_flow(
         stats=stats
     )
 
-    # Build a set of all lines from system prompt, user messages, and assistant messages
-    # We'll skip any line repeated from these.
-    known_lines = set()
-    known_lines.add(system_prompt.strip())
-    for um in user_messages:
-        known_lines.add(um.strip())
-    for am in assistant_messages:
-        known_lines.add(am.strip())
+    # Build a set of known lines to filter out repeated content during streaming
+    known_lines = {system_prompt.strip()}
+    known_lines.update(msg.strip() for msg in user_messages)
+    known_lines.update(msg.strip() for msg in assistant_messages)
 
-    # Generate streaming output
-    raw_text = run_inference(
+    # Stream the generated text from the model
+    raw_text = stream_generated_text(
         model=model,
         model_inputs=model_inputs,
         tokeniser=tokeniser,
@@ -223,8 +142,11 @@ def run_inference_flow(
         known_lines=known_lines
     )
 
-    # Final cleanup for conversation storage
+    # Perform a final cleanup to remove any leftover role labels or repeated lines
     final_text = final_cleanup(raw_text, known_lines)
 
+    # Print a summary of the generation and prompt statistics
     stats.print_summary(final_text)
+
+    # return the final text
     return final_text

@@ -1,14 +1,16 @@
 import argparse
 import sys
-
-# inference
-from inference.infer import run_inference_flow
+from inference.infer import execute_chat_generation
 
 def parse_args():
-    # setup the argument parser
-    parser = argparse.ArgumentParser(description="A simple CLI for Qwen inference.")
+    """
+    Parses command-line arguments and returns them.
+    """
 
-    # arguments
+    # setup the parser
+    parser = argparse.ArgumentParser(description="A simple CLI for inference.")
+
+    # arguments
     parser.add_argument("--prompt", type=str, default=None,
                         help="User prompt for single-turn mode.")
     parser.add_argument("--chat", action="store_true",
@@ -24,78 +26,83 @@ def parse_args():
                         help="Maximum number of new tokens to generate.")
     parser.add_argument("--device", type=str,
                         default=None,
-                        help="cpu, cuda, or mps. If not provided, auto-detect.")
+                        help="Device to run inference on: cpu, cuda, mps, or mlx for Apple MLX.")
     
-    # parse arguments
+    # parse
     return parser.parse_args()
 
+def execute_inference(model_name: str, system_prompt: str,
+                       user_messages: list, assistant_messages: list,
+                       max_new_tokens: int, device: str) -> str:
+    """
+    Executes inference using the appropriate backend based on the device argument.
+    """
+    if device == "mlx":
+        from mlx_lm import load, generate
+        model, tokenizer = load(model_name)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_messages[-1] if user_messages else ""}
+        ]
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        return generate(model=model, tokenizer=tokenizer, prompt=prompt, max_tokens=max_new_tokens, verbose=True)
+    else:
+        return execute_chat_generation(
+            model_name=model_name,
+            system_prompt=system_prompt,
+            user_messages=user_messages,
+            assistant_messages=assistant_messages,
+            max_new_tokens=max_new_tokens,
+            device_override=device
+        )
+
 def main():
-    # parse arguments
+    """
+    Main entry point for the CLI.
+    """
     args = parse_args()
-
+    system_prompt = args.system_prompt
+    user_messages = []
+    assistant_messages = []
+    
     if not args.chat:
-        # Single-turn usage
-        prompt = args.prompt or "Give me a short introduction to large language models."
-
-        # run inference
-        response = run_inference_flow(
+        prompt = args.prompt or "Who is Ada Lovelace?"
+        response = execute_inference(
             model_name=args.model_name,
-            system_prompt=args.system_prompt,
+            system_prompt=system_prompt,
             user_messages=[prompt],
             assistant_messages=[],
             max_new_tokens=args.max_new_tokens,
-            device_override=args.device
+            device=args.device
         )
-
-        # assistant response
         print(f"\nAssistant: {response}")
     else:
-        # Interactive chat mode
-        print("Entering chat mode. Type 'exit' or 'quit' (without quotes) to end.\n")
-
-        # initialize
-        system_prompt = args.system_prompt
-        user_messages = []
-        assistant_messages = []
-
-        # loo
+        print("Entering chat mode. Type 'exit' or 'quit' to end.\n")
         while True:
             try:
-                # user input
                 user_input = input("User: ")
             except (EOFError, KeyboardInterrupt):
                 print("\nExiting chat mode.")
                 sys.exit(0)
-
-            # allow the user to exist
+            
             if user_input.strip().lower() in ["exit", "quit"]:
                 print("Exiting chat mode.")
                 break
-
-            # add messages to the context
+            
             user_messages.append(user_input)
-
-            # Stream the new assistant reply, skipping any repeated lines
-            new_reply = run_inference_flow(
+            response = execute_inference(
                 model_name=args.model_name,
                 system_prompt=system_prompt,
                 user_messages=user_messages,
                 assistant_messages=assistant_messages,
                 max_new_tokens=args.max_new_tokens,
-                device_override=args.device
+                device=args.device
             )
-
-            # clean up
-            cleaned_reply = new_reply.strip()
+            cleaned_reply = response.strip()
             if cleaned_reply:
                 assistant_messages.append(cleaned_reply)
-                #print(f"Assistant: {cleaned_reply}\n")
-            #else:
-                #print("\nNo response was generated.\n")
-
-        # end of chat
+                print(f"Assistant: {cleaned_reply}\n")
         print("Chat session ended.")
 
 if __name__ == "__main__":
-    # kick off
     main()
