@@ -7,7 +7,8 @@ import logging
 from cli.inference.arg_parser import parse_arguments
 
 # inference imports
-from inference.infer import load_inference_model, run_inference
+from model.model_loader import load_model_and_tokenizer
+from inference.infer import run_inference
 
 # set up the logger
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ def main():
 
     # 1) Load the model once at the start (Torch or MLX)
     logger.info("Loading model: %s (device=%s)", args.model_name, device or "auto")
-    model, tokenizer, is_mlx = load_inference_model(args.model_name, device)
+    model, tokenizer, is_mlx = load_model_and_tokenizer(args.model_name, device)
 
     # We'll keep track of the conversation history
     user_messages = []

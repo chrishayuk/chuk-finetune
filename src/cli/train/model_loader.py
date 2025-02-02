@@ -1,10 +1,12 @@
 # src/train/model_loader.py
-from logger_config import logger, color_text, BOLD
-from model_utils import load_model_and_tokenizer
+from cli.train.logger_config import logger, color_text, BOLD
+from model.model_loader import load_model_and_tokenizer
 
 def load_models(model_name, device_override):
     # load the base model and tokenizer
     logger.info(color_text(f"Loading base model & tokenizer: {model_name}", BOLD))
+
+    # load the model and tokenizer
     base_model, tokenizer, device = load_model_and_tokenizer(
         model_name_or_path=model_name,
         device_override=device_override

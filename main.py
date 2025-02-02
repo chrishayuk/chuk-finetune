@@ -2,7 +2,6 @@
 # main.py
 
 # training imports
-from train.model_loader import load_models
 from prompt_handler import render_prompts
 from reward_functions import calculate_reward, combined_calculate_reward
 from dataset_loader import load_dataset
@@ -11,6 +10,7 @@ from train.unified_grpo_trainer import train_grpo
 # cli imports
 from cli.train.arg_parser import parse_arguments
 from cli.train.logger_config import YELLOW, logger, color_text, BOLD, GREEN
+from cli.train.model_loader import load_models
 
 def consume_training_generator(gen):
     final_mean_loss = None

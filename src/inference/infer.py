@@ -1,32 +1,10 @@
 # src/inference/infer.py
-
 import logging
 from typing import List
 
+# inference imports
 from inference.torch.torch_inference import execute_chat_generation
 from inference.mlx.mlx_inference import mlx_chat_generation
-
-def load_inference_model(model_name: str, device: str = None):
-    """
-    Loads a model + tokenizer once, returning (model, tokenizer, is_mlx).
-
-    If device == 'mlx', load Apple MLX; otherwise, load Torch.
-    """
-    if device == "mlx":
-        logging.info("Loading MLX model once...")
-        from mlx_lm import load as mlx_load
-        model, tokenizer = mlx_load(model_name)
-        is_mlx = True
-    else:
-        logging.info(f"Loading Torch model (device={device or 'auto'}) once...")
-        from model_utils import load_model_and_tokenizer
-        model, tokenizer, _dev = load_model_and_tokenizer(
-            model_name_or_path=model_name,
-            device_override=device
-        )
-        is_mlx = False
-
-    return model, tokenizer, is_mlx
 
 def run_inference(
     model,
