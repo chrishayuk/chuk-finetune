@@ -1,45 +1,51 @@
-# src/verifiers/response_verifier.py
 import re
 
-def check_format(response):
-    # checks for a think tag
-    has_think = re.search(r'<think>(.*?)</think>', response, re.DOTALL)
+def check_format(response: str) -> float:
+    """
+    Returns a score based on which tags are present:
+      - <think> -> 0.5
+      - <answer> -> 0.5
+    If neither tag is present, we apply a small penalty of -0.1.
+    """
+    has_think = bool(re.search(r'<think>(.*?)</think>', response, re.DOTALL))
+    has_answer = bool(re.search(r'<answer>(.*?)</answer>', response, re.DOTALL))
 
-    # checks for a answer tag
-    has_answer = re.search(r'<answer>(.*?)</answer>', response, re.DOTALL)
+    score = 0.0
+    if has_think:
+        score += 0.5
+    if has_answer:
+        score += 0.5
 
-    # checks for a verifier tag
-    has_verifier_answer = re.search(r'<verifier_answer>(.*?)</verifier_answer>', response, re.DOTALL)
+    # If neither tag is present, assign negative penalty
+    if score == 0.0:
+        score = -0.1
 
-    # return a reward
-    return 1.0 if (has_think and has_answer and has_verifier_answer) else 0.0
+    return score
 
-def extract_verifier_answer(response):
-    # get the verifier answer
-    match = re.search(r'<verifier_answer>(.*?)</verifier_answer>', response, re.DOTALL)
-
-    # return
-    return match.group(1).strip() if match else None
-
-def extract_answer(response):
-    # extract the answer
+def extract_answer(response: str) -> str:
+    """
+    Extracts the text inside <answer>...</answer>.
+    Returns None if the tag is not present.
+    """
     match = re.search(r'<answer>(.*?)</answer>', response, re.DOTALL)
-
-    # return the answer
     return match.group(1).strip() if match else None
 
-def calculate_reward(response, verifier):
-    # calculate the format reward
-    format_reward = check_format(response)
+def calculate_reward(response: str, verifier) -> float:
+    """
+    1) Awards partial format reward for <think> and <answer>.
+    2) Also checks correctness of the <answer> using verifier.check().
+    3) Returns the sum of the format score and the accuracy score.
+    """
+    # (1) Check format
+    format_score = check_format(response)
 
-    # extract the answer
-    answer = extract_answer(response)
+    # (2) Extract the <answer> for correctness check
+    model_answer = extract_answer(response)
 
-    # extract the verifier answer
-    answer = extract_verifier_answer(response)
+    # (3) Accuracy reward (assumes verifier.check() returns True/False)
+    if model_answer and verifier.check(model_answer):
+        accuracy_score = 1.0
+    else:
+        accuracy_score = 0.0
 
-    # accuracy reward
-    accuracy_reward = 1.0 if verifier.check(answer) else 0.0
-
-    # return the reward
-    return format_reward + accuracy_reward
+    return format_score + accuracy_score
