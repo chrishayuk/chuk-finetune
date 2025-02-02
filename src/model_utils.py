@@ -1,4 +1,9 @@
 # src/model_utils.py
+import logging
+
+# get the logger
+logger = logging.getLogger(__name__)
+
 def load_model_and_tokenizer(
     model_name_or_path: str,
     device_override: str = None
@@ -9,28 +14,28 @@ def load_model_and_tokenizer(
     If device_override == "mlx", use Apple MLX logic.
     Otherwise, assume Torch for "cpu", "cuda", "mps", or None.
     """
-    # If device_override is "mlx", do MLX
     if device_override == "mlx":
         # ------------------ MLX Path ------------------
         import mlx.nn as nn
         from mlx_lm import load as mlx_load
 
-        print(f"[INFO] Using MLX. Loading model/tokenizer from {model_name_or_path}...")
+        # load the model
+        logger.info("Using MLX. Loading model/tokenizer from %s...", model_name_or_path)
         model, tokenizer = mlx_load(model_name_or_path)
 
         # MLX manages device differently, so we return None
         device = None
 
-        # return model, tokenizer and device
+        # return the model and tokenizer
         return model, tokenizer, device
 
     else:
         # ------------------ Torch Path ------------------
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        from torch_device_selection import DeviceSelector
 
-        print(f"[INFO] Using Torch. Loading model/tokenizer from {model_name_or_path}...")
+        # logging
+        logger.info("Using Torch. Loading model/tokenizer from %s...", model_name_or_path)
 
         # Determine actual device if not passed
         if device_override is None:
@@ -45,7 +50,7 @@ def load_model_and_tokenizer(
             model_name_or_path, torch_dtype="auto"
         )
 
-        # move the model to the device
+        # move the model to the device
         model.to(device)
 
         # put in eval mode
@@ -54,5 +59,5 @@ def load_model_and_tokenizer(
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
 
-        # return the model, tokenizer, device
+        # return the model, tokenizer and device
         return model, tokenizer, device
