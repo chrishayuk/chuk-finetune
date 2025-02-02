@@ -1,4 +1,4 @@
-# logger_config.py
+# src/cli/train/logger_config.py
 import logging
 import sys
 

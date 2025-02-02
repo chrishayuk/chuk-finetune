@@ -1,58 +1,34 @@
 #!/usr/bin/env python3
 # src/cli/inference/cli.py
-import argparse
 import sys
+import logging
 
-# Unified loading/inference (preloaded approach)
+# cli imports
+from cli.inference.arg_parser import parse_arguments
+
+# inference imports
 from inference.infer import load_inference_model, run_inference
 
-def parse_args():
-    """Parse command-line arguments for inference."""
-    parser = argparse.ArgumentParser(description="Simple CLI for MLX/Torch inference.")
-    parser.add_argument(
-        "--prompt", type=str, default=None,
-        help="User prompt for single-turn mode (if not --chat)."
-    )
-    parser.add_argument(
-        "--chat", action="store_true",
-        help="Enable interactive chat mode."
-    )
-    parser.add_argument(
-        "--system_prompt", type=str,
-        default="You are a helpful assistant.",
-        help="A system prompt giving high-level context."
-    )
-    parser.add_argument(
-        "--model_name", type=str,
-        default="Qwen/Qwen2.5-7B-Instruct",
-        help="Model name or local path for inference."
-    )
-    parser.add_argument(
-        "--max_new_tokens", type=int,
-        default=512,
-        help="Maximum number of tokens to generate."
-    )
-    parser.add_argument(
-        "--device", type=str,
-        default=None,
-        help="Device for inference: cpu, cuda, mps, or mlx."
-    )
-    return parser.parse_args()
+# set up the logger
+logger = logging.getLogger(__name__)
 
 def main():
-    args = parse_args()
+    # parse arguments
+    args = parse_arguments()
 
+    # set the system prompt and device
     system_prompt = args.system_prompt
     device = args.device
 
     # 1) Load the model once at the start (Torch or MLX)
-    print(f"[INFO] Loading model: {args.model_name} (device={device or 'auto'})")
+    logger.info("Loading model: %s (device=%s)", args.model_name, device or "auto")
     model, tokenizer, is_mlx = load_inference_model(args.model_name, device)
 
     # We'll keep track of the conversation history
     user_messages = []
     assistant_messages = []
 
+    # are we in chat mode
     if not args.chat:
         # Single-turn mode
         single_prompt = args.prompt or "Who is Ada Lovelace?"
@@ -68,22 +44,32 @@ def main():
             assistant_messages=assistant_messages,
             max_new_tokens=args.max_new_tokens
         )
+
+        # print the assistant response
         print(f"\nAssistant: {response}")
     else:
         # Chat mode
         print("Entering chat mode. Type 'exit' or 'quit' to end.\n")
+
+        # chat loop
         while True:
             try:
+                # get the user input
                 user_input = input("User: ")
             except (EOFError, KeyboardInterrupt):
                 print("\nExiting chat mode.")
                 sys.exit(0)
 
+            # check if the user wants to quite
             if user_input.strip().lower() in ["exit", "quit"]:
+                # quitting
                 print("Exiting chat mode.")
                 break
 
+            # add the user message to the chat history
             user_messages.append(user_input)
+            
+            # run inference
             response = run_inference(
                 model=model,
                 tokenizer=tokenizer,
@@ -93,11 +79,17 @@ def main():
                 assistant_messages=assistant_messages,
                 max_new_tokens=args.max_new_tokens
             )
+
+            # clean up the replay
             cleaned_reply = response.strip()
+
+            # check we have a response
             if cleaned_reply:
+                # add the response to the assistant messages
                 assistant_messages.append(cleaned_reply)
                 print(f"Assistant: {cleaned_reply}\n")
 
+        # done
         print("Chat session ended.")
 
 if __name__ == "__main__":

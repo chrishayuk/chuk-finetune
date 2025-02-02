@@ -1,4 +1,4 @@
-# arg_parser.py
+# src/cli/train/arg_parser.py
 import argparse
 
 def parse_arguments():
