@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # main.py
 
-# training imports
+# Training imports
 from prompt_handler import render_prompts
-from reward_functions import calculate_reward, combined_calculate_reward
-from dataset_loader import load_dataset
+from reward_functions import combined_calculate_reward, set_eval_model
+from cli.train.dataset_loader import load_dataset
 from train.unified_grpo_trainer import train_grpo
 
-# cli imports
+# CLI imports
 from cli.train.arg_parser import parse_arguments
 from cli.train.logger_config import YELLOW, logger, color_text, BOLD, GREEN
 from cli.train.model_loader import load_models
@@ -44,35 +44,42 @@ def consume_training_generator(gen):
     return final_mean_loss
 
 def main():
+    # Parse CLI arguments.
     args = parse_arguments()
-    logger.info(f"Model: {args.model}, Device: {args.device or 'Auto-Detect'}")
 
+    # Load the training models.
+    logger.info(f"Model: {args.model}, Device: {args.device or 'Auto-Detect'}")
     base_model, ref_model, tokenizer, device = load_models(args.model, args.device)
 
+    # Hardcode the evaluator model as "Qwen2.5-7B-Instruct".
+    evaluator_model, _, evaluator_tokenizer, _ = load_models("Qwen/Qwen2.5-7B-Instruct", args.device)
+
+    # Set the evaluator model/tokenizer for self reward calculation.
+    set_eval_model(evaluator_model, evaluator_tokenizer)
+    logger.info("Evaluator model set to Qwen2.5-7B-Instruct.")
+
+    # Load the dataset.
     logger.info("Loading dataset (poetry prompts with verifiers)...")
-    dataset = load_dataset()
+    dataset = load_dataset("dataset/math_completions.jsonl")
+
+    # Optionally render or mix prompts.
     data_rendered = render_prompts(dataset)
+    print(data_rendered)
 
-    # IMPORTANT: use the new calculate_reward that returns a tuple
-    def stage_one_reward(response_text, item):
-        return calculate_reward(response_text, item)
-
-    logger.info(color_text("===== STAGE ONE: LOCAL FORMAT =====", BOLD))
-    gen_stage1 = train_grpo(
-        base_model, ref_model, tokenizer, data_rendered,
-        stage_one_reward, 1e-5, 10, 2, 2, args.device, True
-    )
-    #mean_loss_stage1 = consume_training_generator(gen_stage1)
-    #logger.info(color_text(f"Stage One complete. Mean loss={mean_loss_stage1:.4f}", GREEN))
-
-    # def stage_two_reward(response_text, item):
+    # # Integrated reward function: for items containing a "completion" key,
+    # # the self-reward mechanism (using the evaluator model) is used.
+    # def integrated_reward(response_text, item):
     #     return combined_calculate_reward(response_text, item)
-    #
-    # logger.info(color_text("\n===== STAGE TWO: LOCAL+REMOTE =====", BOLD))
-    # gen_stage2 = train_grpo(base_model, ref_model, tokenizer, data_rendered,
-    #                         stage_two_reward, 1e-5, 2, 2, 2, args.device, True)
-    # #mean_loss_stage2 = consume_training_generator(gen_stage2)
-    # #logger.info(color_text(f"Stage Two complete. Mean loss={mean_loss_stage2:.4f}", GREEN))
+
+    # logger.info(color_text("===== STAGE ONE: INTEGRATED REWARD FUNCTION =====", BOLD))
+    # gen_stage1 = train_grpo(
+    #     base_model, ref_model, tokenizer, data_rendered,
+    #     integrated_reward, 1e-5, 10, 2, 2, args.device, True
+    # )
+
+    # Uncomment to log detailed training generator output.
+    # mean_loss_stage1 = consume_training_generator(gen_stage1)
+    # logger.info(color_text(f"Stage One complete. Mean loss={mean_loss_stage1:.4f}", GREEN))
 
     logger.info(color_text("===== Training fully complete! =====", BOLD))
 

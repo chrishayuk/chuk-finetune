@@ -39,12 +39,7 @@ def ensure_dict(item):
             pass
     raise ValueError(f"[ERROR] Unexpected non-dict item: {item}")
 
-def generate_single_response_and_oldlogprob(
-    model,
-    tokenizer,
-    prompt: str,
-    verbose=False
-):
+def generate_single_response_and_oldlogprob(model, tokenizer, prompt: str, verbose=False):
     response_text = generate(
         model=model,
         tokenizer=tokenizer,
@@ -53,7 +48,7 @@ def generate_single_response_and_oldlogprob(
         verbose=False
     ).strip()
 
-    # optional debug => changed label to "Model:"
+    # Optional debug => changed label to "Model:"
     if verbose:
         print(color_text(f"Model: {response_text}", CYAN))
 
@@ -68,16 +63,7 @@ def generate_single_response_and_oldlogprob(
 
     return response_text, sum_lp
 
-def compute_grpo_loss(
-    model,
-    ref_model,
-    tokenizer,
-    item,
-    responses,
-    old_logprobs,
-    rewards,
-    verbose=False
-):
+def compute_grpo_loss(model, ref_model, tokenizer, item, responses, old_logprobs, rewards, verbose=False):
     advantages_arr = compute_advantages(rewards)
     if verbose:
         logger.info(f"Rewards: {rewards}")
@@ -102,7 +88,7 @@ def compute_grpo_loss(
 
     logprobs_current_sums = mx.concat(current_list, axis=0)
     kl_sums = mx.concat(kl_list, axis=0)
-    old_sums_m   = mx.array(old_logprobs)
+    old_sums_m = mx.array(old_logprobs)
     advantages_m = mx.array(advantages_arr)
 
     loss_val = grpo_loss(
@@ -113,16 +99,7 @@ def compute_grpo_loss(
     )
     return loss_val
 
-def single_question_loss(
-    model,
-    ref_model,
-    tokenizer,
-    item,
-    responses,
-    old_logprobs,
-    rewards,
-    verbose=False
-):
+def single_question_loss(model, ref_model, tokenizer, item, responses, old_logprobs, rewards, verbose=False):
     return compute_grpo_loss(
         model=model,
         ref_model=ref_model,
@@ -134,18 +111,10 @@ def single_question_loss(
         verbose=verbose
     )
 
-def train_step(
-    base_model,
-    ref_model,
-    tokenizer,
-    batch_questions,
-    G,
-    optimizer,
-    calculate_reward=None,
-    device=None,
-    verbose=False
-):
+def train_step(base_model, ref_model, tokenizer, batch_questions, G, optimizer, calculate_reward=None, device=None, verbose=False):
     losses = []
+    batch_rewards = []
+    batch_idx = 0
 
     def closure(model, item, responses, old_logprobs, rewards):
         return single_question_loss(
@@ -162,11 +131,9 @@ def train_step(
     loss_value_and_grad = nn.value_and_grad(base_model, closure)
 
     for i, raw_item in enumerate(batch_questions):
-        # Convert to dict
         item = ensure_dict(raw_item)
         question_str = item["prompt"].strip()
 
-        # Truncate question
         short_q = (question_str[:100] + "...") if len(question_str) > 100 else question_str
         logger.info(color_text(f"\n=== Prompt {i} ===\n", BOLD) + short_q)
 
@@ -174,13 +141,8 @@ def train_step(
         old_logprobs = []
         rewards_list = []
 
-        last_feedback = ""
-
         for g_idx in range(G):
-            full_prompt = question_str
-            if last_feedback:
-                full_prompt += f"\n\n[Verifier Feedback]: {last_feedback}"
-
+            full_prompt = question_str  # Use only the original prompt.
             resp, old_lp = generate_single_response_and_oldlogprob(
                 model=base_model,
                 tokenizer=tokenizer,
@@ -193,15 +155,15 @@ def train_step(
             score, feedback_text = calculate_reward(resp, item)
             rewards_list.append(score)
 
-            # If response is trivial ("provided." or empty), skip printing
             skip_resp = (resp.lower() == "provided." or not resp.strip())
             if not skip_resp:
                 logger.info(color_text(f"Response {g_idx+1}/{G}:", GREEN) + f" {resp}")
-
             logger.info(f"Reward => {score:.2f}")
-            last_feedback = feedback_text
+            logger.info(f"Verifier Feedback: {feedback_text}")
 
-        # Compute GRPO loss & update
+        avg_reward = np.mean(rewards_list)
+        batch_rewards.append(avg_reward)
+
         loss_val, grads_dict = loss_value_and_grad(
             base_model,
             item,
@@ -213,34 +175,21 @@ def train_step(
         optimizer.update(base_model, grads_dict)
 
         final_loss = float(loss_val)
-        logger.info(color_text(f"Final Loss => {final_loss:.4f}", YELLOW))
         losses.append(final_loss)
+        batch_idx += 1
+        logger.info(color_text(f"Batch {batch_idx}: Loss => {final_loss:.4f}, Mean Reward => {avg_reward:.4f}", YELLOW))
 
-    return np.mean(losses)
+    return np.mean(losses), np.mean(batch_rewards)
 
-def train_grpo(
-    base_model,
-    ref_model,
-    tokenizer,
-    data_iterator,
-    calculate_reward,
-    optimizer,
-    epochs: int = 1,
-    batch_size: int = 4,
-    G: int = 4,
-    device=None,
-    verbose=False
-):
-    all_epoch_losses = []
+def train_grpo(base_model, ref_model, tokenizer, data_iterator, calculate_reward, optimizer, epochs: int = 1, batch_size: int = 4, G: int = 4, device=None, verbose=False):
+    all_batch_losses = []
+    all_batch_rewards = []
 
     for epoch in range(epochs):
         if verbose:
             logger.info(color_text(f"\n[MLX] Starting epoch {epoch+1}/{epochs}...", CYAN))
-
-        epoch_losses = []
         for batch_questions in data_iterator():
-            # No "first batch" prints
-            loss = train_step(
+            batch_loss, batch_reward = train_step(
                 base_model=base_model,
                 ref_model=ref_model,
                 tokenizer=tokenizer,
@@ -251,11 +200,11 @@ def train_grpo(
                 device=device,
                 verbose=verbose
             )
-            epoch_losses.append(loss)
+            all_batch_losses.append(batch_loss)
+            all_batch_rewards.append(batch_reward)
 
-        avg_loss = np.mean(epoch_losses)
-        all_epoch_losses.append(avg_loss)
-        if verbose:
-            logger.info(color_text(f"[MLX] Epoch {epoch+1} -> Mean loss: {avg_loss:.4f}", GREEN))
-
-    return np.mean(all_epoch_losses)
+    overall_loss = np.mean(all_batch_losses)
+    overall_reward = np.mean(all_batch_rewards)
+    logger.info(color_text(f"Overall Mean Loss: {overall_loss:.4f}", GREEN))
+    logger.info(color_text(f"Overall Mean Reward: {overall_reward:.4f}", GREEN))
+    return overall_loss, overall_reward
