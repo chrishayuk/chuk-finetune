@@ -6,74 +6,91 @@ from mlx_lm import generate
 from train.mlx.grpo_loss import compute_advantages, grpo_loss
 from train.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
 
+import ast
+import logging
 
-def generate_responses_and_oldlogprobs(
+# Setup minimal logging format: just the message
+logging.basicConfig(
+    level=logging.INFO,  # Adjust to DEBUG if you need more details
+    format="%(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ----- Simple ANSI Colours (optional) -----
+RESET = "\033[0m"
+BOLD = "\033[1m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+RED = "\033[91m"
+
+def color_text(text, color):
+    return f"{color}{text}{RESET}"
+
+def ensure_dict(item):
+    if isinstance(item, dict):
+        return item
+    if isinstance(item, str) and item.strip().startswith("{"):
+        try:
+            possible_dict = ast.literal_eval(item)
+            if isinstance(possible_dict, dict):
+                return possible_dict
+        except:
+            pass
+    raise ValueError(f"[ERROR] Unexpected non-dict item: {item}")
+
+def generate_single_response_and_oldlogprob(
     model,
     tokenizer,
-    question,
-    G,
+    prompt: str,
     verbose=False
 ):
-    """
-    Generates G responses (untraced), computes old log-probs, 
-    and optionally prints the responses if verbose=True.
-    """
-    responses = []
-    logprobs_old_sums = []
+    response_text = generate(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_tokens=200,
+        verbose=False
+    ).strip()
 
-    for idx in range(G):
-        response_text = generate(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=question,
-            max_tokens=200,
-            verbose=False
-        )
-        resp = response_text.strip()
-        responses.append(resp)
+    # optional debug => changed label to "Model:"
+    if verbose:
+        print(color_text(f"Model: {response_text}", CYAN))
 
-        if verbose:
-            print(f"  Generated response {idx+1}: {resp}")
+    # Handle empty tokens
+    tokens = tokenizer.encode(response_text)
+    if not tokens:
+        logger.warning("[WARN] Empty token sequence encountered, using fallback.")
+        tokens = [tokenizer.eos_token_id]
 
-        old_tokens = tokenizer.encode(resp)
-        old_logits = model(mx.array(old_tokens, mx.uint32)[None])
-        sum_lp = gather_logprobs(old_logits, old_tokens)
-        logprobs_old_sums.append(float(sum_lp))
+    logits = model(mx.array(tokens, mx.uint32)[None])
+    sum_lp = float(gather_logprobs(logits, tokens))  # old logprob for PPO
 
-    return responses, logprobs_old_sums
-
+    return response_text, sum_lp
 
 def compute_grpo_loss(
     model,
     ref_model,
     tokenizer,
-    question: str,
-    G: int,
-    verifier,
-    calculate_reward,
+    item,
     responses,
     old_logprobs,
+    rewards,
     verbose=False
 ):
-    """
-    Given precomputed 'responses' and 'old_logprobs', compute:
-      - Rewards + advantages
-      - Current log-probs + KL (traced by autograd)
-      - Final GRPO loss
-    Now logs rewards/advantages if verbose=True.
-    """
-    # 1) Rewards + advantages
-    rewards = [calculate_reward(r, verifier) for r in responses]
     advantages_arr = compute_advantages(rewards)
     if verbose:
-        print(f"Rewards: {rewards}")
-        print(f"Advantages: {advantages_arr}")
+        logger.info(f"Rewards: {rewards}")
+        logger.info(f"Advantages: {advantages_arr}")
 
-    # 2) Current log-probs & KL (tracked by autograd)
     current_list = []
     kl_list = []
     for resp in responses:
         tokens = tokenizer.encode(resp)
+        if not tokens:
+            logger.warning("[WARN] Empty token sequence in compute_grpo_loss, fallback.")
+            tokens = [tokenizer.eos_token_id]
+
         out_current = model(mx.array(tokens, mx.uint32)[None])
         sum_current = gather_logprobs(out_current, tokens)
 
@@ -84,12 +101,10 @@ def compute_grpo_loss(
         kl_list.append(kl_val)
 
     logprobs_current_sums = mx.concat(current_list, axis=0)
-    kl_sums               = mx.concat(kl_list, axis=0)
-
+    kl_sums = mx.concat(kl_list, axis=0)
     old_sums_m   = mx.array(old_logprobs)
     advantages_m = mx.array(advantages_arr)
 
-    # 3) Final GRPO loss
     loss_val = grpo_loss(
         logprobs_current=logprobs_current_sums,
         logprobs_old=old_sums_m,
@@ -98,113 +113,116 @@ def compute_grpo_loss(
     )
     return loss_val
 
-
 def single_question_loss(
     model,
     ref_model,
     tokenizer,
-    question,
-    G,
-    verifier,
-    calculate_reward,
+    item,
     responses,
     old_logprobs,
+    rewards,
     verbose=False
 ):
-    """
-    Minimal function wrapped by value_and_grad(...). 
-    Only does final log-probs, KL, and GRPO loss computations (with autograd).
-    """
     return compute_grpo_loss(
         model=model,
         ref_model=ref_model,
         tokenizer=tokenizer,
-        question=question,
-        G=G,
-        verifier=verifier,
-        calculate_reward=calculate_reward,
+        item=item,
         responses=responses,
         old_logprobs=old_logprobs,
+        rewards=rewards,
         verbose=verbose
     )
-
 
 def train_step(
     base_model,
     ref_model,
     tokenizer,
     batch_questions,
-    verifier,
     G,
     optimizer,
-    device=None,
     calculate_reward=None,
+    device=None,
     verbose=False
 ):
-    """
-    Single MLX training step over a batch:
-      - Generate responses + old log-probs outside autograd
-      - Compute GRPO loss inside a value_and_grad closure
-      - Update the model
-      - Print responses/rewards if verbose=True
-    """
     losses = []
 
-    def closure(model, question, responses, old_logprobs):
+    def closure(model, item, responses, old_logprobs, rewards):
         return single_question_loss(
             model=model,
             ref_model=ref_model,
             tokenizer=tokenizer,
-            question=question,
-            G=G,
-            verifier=verifier,
-            calculate_reward=calculate_reward,
+            item=item,
             responses=responses,
             old_logprobs=old_logprobs,
+            rewards=rewards,
             verbose=verbose
         )
 
     loss_value_and_grad = nn.value_and_grad(base_model, closure)
 
-    for i, question in enumerate(batch_questions):
-        if verbose:
-            print(f"\n--- MLX GRPO step, item {i} ---")
-            print(f"Question: {question}")
+    for i, raw_item in enumerate(batch_questions):
+        # Convert to dict
+        item = ensure_dict(raw_item)
+        question_str = item["prompt"].strip()
 
-        # Generate + old-logprobs (untraced)
-        responses, old_logprobs = generate_responses_and_oldlogprobs(
-            model=base_model,
-            tokenizer=tokenizer,
-            question=question,
-            G=G,
-            verbose=verbose
-        )
+        # Truncate question
+        short_q = (question_str[:100] + "...") if len(question_str) > 100 else question_str
+        logger.info(color_text(f"\n=== Prompt {i} ===\n", BOLD) + short_q)
 
-        # Compute (loss, grads) with autograd
+        responses = []
+        old_logprobs = []
+        rewards_list = []
+
+        last_feedback = ""
+
+        for g_idx in range(G):
+            full_prompt = question_str
+            if last_feedback:
+                full_prompt += f"\n\n[Verifier Feedback]: {last_feedback}"
+
+            resp, old_lp = generate_single_response_and_oldlogprob(
+                model=base_model,
+                tokenizer=tokenizer,
+                prompt=full_prompt,
+                verbose=verbose
+            )
+            responses.append(resp)
+            old_logprobs.append(old_lp)
+
+            score, feedback_text = calculate_reward(resp, item)
+            rewards_list.append(score)
+
+            # If response is trivial ("provided." or empty), skip printing
+            skip_resp = (resp.lower() == "provided." or not resp.strip())
+            if not skip_resp:
+                logger.info(color_text(f"Response {g_idx+1}/{G}:", GREEN) + f" {resp}")
+
+            logger.info(f"Reward => {score:.2f}")
+            last_feedback = feedback_text
+
+        # Compute GRPO loss & update
         loss_val, grads_dict = loss_value_and_grad(
             base_model,
-            question,
+            item,
             responses,
-            old_logprobs
+            old_logprobs,
+            rewards_list
         )
         mx.eval(grads_dict)
         optimizer.update(base_model, grads_dict)
 
         final_loss = float(loss_val)
-        if verbose:
-            print(f"Loss (item {i}): {final_loss:.4f}")
-
+        logger.info(color_text(f"Final Loss => {final_loss:.4f}", YELLOW))
         losses.append(final_loss)
 
     return np.mean(losses)
-
 
 def train_grpo(
     base_model,
     ref_model,
     tokenizer,
-    verifier,
-    data_iterator,        # yields batches of questions
+    data_iterator,
     calculate_reward,
     optimizer,
     epochs: int = 1,
@@ -213,30 +231,24 @@ def train_grpo(
     device=None,
     verbose=False
 ):
-    """
-    High-level loop:
-      - For each epoch, re-instantiate data_iterator
-      - For each batch, call train_step(...)
-      - Return mean loss
-    """
     all_epoch_losses = []
 
     for epoch in range(epochs):
         if verbose:
-            print(f"[MLX] Starting epoch {epoch+1}/{epochs}...")
-        epoch_losses = []
+            logger.info(color_text(f"\n[MLX] Starting epoch {epoch+1}/{epochs}...", CYAN))
 
+        epoch_losses = []
         for batch_questions in data_iterator():
+            # No "first batch" prints
             loss = train_step(
                 base_model=base_model,
                 ref_model=ref_model,
                 tokenizer=tokenizer,
                 batch_questions=batch_questions,
-                verifier=verifier,
                 G=G,
                 optimizer=optimizer,
-                device=device,
                 calculate_reward=calculate_reward,
+                device=device,
                 verbose=verbose
             )
             epoch_losses.append(loss)
@@ -244,6 +256,6 @@ def train_grpo(
         avg_loss = np.mean(epoch_losses)
         all_epoch_losses.append(avg_loss)
         if verbose:
-            print(f"[MLX] Epoch {epoch+1} -> Mean loss: {avg_loss:.4f}")
+            logger.info(color_text(f"[MLX] Epoch {epoch+1} -> Mean loss: {avg_loss:.4f}", GREEN))
 
     return np.mean(all_epoch_losses)
