@@ -22,4 +22,4 @@ readme = "README.md"
 where = ["src"]
 
 [project.scripts]
-inference-cli = "cli.inference_cli:main"
+inference-cli = "cli.inference.cli:main"

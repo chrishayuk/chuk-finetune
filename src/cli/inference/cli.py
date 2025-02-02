@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# src/cli/inference_cli.py
+# src/cli/inference/cli.py
 import argparse
 import sys
 

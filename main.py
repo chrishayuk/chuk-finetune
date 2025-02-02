@@ -4,13 +4,13 @@
 # main imports
 from arg_parser import parse_arguments
 from logger_config import YELLOW, logger, color_text, BOLD, GREEN
-from model_loader import load_models
+from train.model_loader import load_models
 from prompt_handler import render_prompts
 from reward_functions import calculate_reward, combined_calculate_reward
 
 # train imports
-from src.dataset_loader import load_dataset
-from src.train.unified_grpo_trainer import train_grpo
+from dataset_loader import load_dataset
+from train.unified_grpo_trainer import train_grpo
 
 def consume_training_generator(gen):
     final_mean_loss = None
