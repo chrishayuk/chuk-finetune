@@ -3,26 +3,19 @@ import numpy as np
 import mlx.core as mx
 
 def compute_advantages(rewards):
-    # get the rewards
-    rewards = np.array(rewards, dtype=np.float32)
-
-    # get the mean
-    mean = rewards.mean()
-
-    # get standard deviation
-    raw_std = rewards.std()
+    """
+    Basic advantage function that just returns the raw rewards.
+    If your reward function yields variation among responses,
+    you'll avoid zero advantages.
     
-    if raw_std < 1e-8:
-        return np.zeros_like(rewards, dtype=np.float32)
-    else:
-        return (rewards - mean) / (raw_std + 1e-8)
+    If all responses in a batch receive the same reward,
+    advantages will be identical (and can be zero if you do mean subtraction).
+    """
+    return np.array(rewards, dtype=np.float32)
 
 def grpo_loss(logprobs_current, logprobs_old, advantages, kl_divergences,
               clip_range=0.2, kl_coeff=0.1):
-    """
-    Computes the GRPO loss, which combines a clipped surrogate objective with a KL penalty.
-    """
-    # get the ratio
+    # ratio
     ratios = mx.exp(logprobs_current - logprobs_old)
 
     # Surrogate objective
@@ -41,5 +34,5 @@ def grpo_loss(logprobs_current, logprobs_old, advantages, kl_divergences,
     # KL penalty
     kl_loss = kl_coeff * mx.mean(kl_divergences)
 
-    # return the loss
+    # Final loss is policy surrogate plus KL penalty
     return surrogate_loss + kl_loss

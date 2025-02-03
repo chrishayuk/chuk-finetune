@@ -3,7 +3,7 @@
 
 # Training imports
 from reward_functions import combined_calculate_reward, set_eval_model
-from train.unified_grpo_trainer import train_grpo
+from train.grpo_trainer import train_grpo
 
 # CLI imports
 from cli.train.arg_parser import parse_arguments
@@ -53,12 +53,12 @@ def main():
     logger.info(f"Model: {args.model}, Device: {args.device or 'Auto-Detect'}")
     base_model, ref_model, tokenizer, device = load_models(args.model, args.device)
 
-    # Hardcode the evaluator model as "Qwen2.5-7B-Instruct".
-    evaluator_model, _, evaluator_tokenizer, _ = load_models("Qwen/Qwen2.5-7B-Instruct", args.device)
+    # # Hardcode the evaluator model as "Qwen2.5-7B-Instruct".
+    # evaluator_model, _, evaluator_tokenizer, _ = load_models("Qwen/Qwen2.5-7B-Instruct", args.device)
 
-    # Set the evaluator model/tokenizer for self reward calculation.
-    set_eval_model(evaluator_model, evaluator_tokenizer)
-    logger.info("Evaluator model set to Qwen2.5-7B-Instruct.")
+    # # Set the evaluator model/tokenizer for self reward calculation.
+    # set_eval_model(evaluator_model, evaluator_tokenizer)
+    # logger.info("Evaluator model set to Qwen2.5-7B-Instruct.")
 
     # Load the dataset (prompts + verifiers).
     logger.info("Loading dataset (prompts + verifiers)...")
@@ -73,13 +73,23 @@ def main():
     
     # logger.info(color_text("===== STAGE ONE: INTEGRATED REWARD FUNCTION =====", BOLD))
     gen_stage1 = train_grpo(
-        base_model, ref_model, tokenizer, prepared_dataset,
-        integrated_reward, 1e-5, 10, 2, 2, args.device, True
+        base_model=base_model,
+        ref_model=ref_model,
+        tokenizer=tokenizer,
+        dataset=prepared_dataset,
+        calculate_reward=integrated_reward,
+        lr=1e-5,         # Learning rate
+        epochs=10,       # Number of epochs
+        batch_size=2,    # Batch size
+        G=2,             # Generate 2 responses per prompt
+        device=args.device,
+        verbose=True
     )
 
-    #
-    # mean_loss_stage1 = consume_training_generator(gen_stage1)
-    # logger.info(color_text(f"Stage One complete. Mean loss={mean_loss_stage1:.4f}", GREEN))
+
+    
+    mean_loss_stage1 = consume_training_generator(gen_stage1)
+    logger.info(color_text(f"Stage One complete. Mean loss={mean_loss_stage1:.4f}", GREEN))
 
     logger.info(color_text("===== Training fully complete! =====", BOLD))
 

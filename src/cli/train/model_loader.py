@@ -15,7 +15,7 @@ def load_models(model_name, device_override):
     # load the reference model and tokenizer
     logger.info("Loading reference model (KL/PPO) ...")
     ref_model, _, _ = load_model_and_tokenizer(
-        model_name_or_path=model_name,
+        model_name_or_path="Qwen/Qwen2.5-3B-Instruct",
         device_override=device_override
     )
 
