@@ -16,7 +16,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ----- Simple ANSI Colours (optional) -----
 RESET = "\033[0m"
 BOLD = "\033[1m"
 GREEN = "\033[92m"
@@ -48,11 +47,9 @@ def generate_single_response_and_oldlogprob(model, tokenizer, prompt: str, verbo
         verbose=False
     ).strip()
 
-    # Optional debug => changed label to "Model:"
     if verbose:
         print(color_text(f"Model: {response_text}", CYAN))
 
-    # Handle empty tokens
     tokens = tokenizer.encode(response_text)
     if not tokens:
         logger.warning("[WARN] Empty token sequence encountered, using fallback.")
@@ -112,6 +109,10 @@ def single_question_loss(model, ref_model, tokenizer, item, responses, old_logpr
     )
 
 def train_step(base_model, ref_model, tokenizer, batch_questions, G, optimizer, calculate_reward=None, device=None, verbose=False):
+    """
+    Processes a single batch of questions with GRPO training.
+    If *any* generated response yields a None reward, we skip that item entirely.
+    """
     losses = []
     batch_rewards = []
     batch_idx = 0
@@ -141,8 +142,10 @@ def train_step(base_model, ref_model, tokenizer, batch_questions, G, optimizer, 
         old_logprobs = []
         rewards_list = []
 
+        skip_this_item = False
+
         for g_idx in range(G):
-            full_prompt = question_str  # Use only the original prompt.
+            full_prompt = question_str
             resp, old_lp = generate_single_response_and_oldlogprob(
                 model=base_model,
                 tokenizer=tokenizer,
@@ -153,13 +156,22 @@ def train_step(base_model, ref_model, tokenizer, batch_questions, G, optimizer, 
             old_logprobs.append(old_lp)
 
             score, feedback_text = calculate_reward(resp, item)
+            
+            # If reward is None => skip training for this item
+            if score is None:
+                logger.info("[SKIP] Verifier unavailable or error => skipping item.")
+                skip_this_item = True
+                break
+
             rewards_list.append(score)
 
-            skip_resp = (resp.lower() == "provided." or not resp.strip())
-            if not skip_resp:
-                logger.info(color_text(f"Response {g_idx+1}/{G}:", GREEN) + f" {resp}")
+            logger.info(color_text(f"Response {g_idx+1}/{G}:", GREEN) + f" {resp}")
             logger.info(f"Reward => {score:.2f}")
             logger.info(f"Verifier Feedback: {feedback_text}")
+
+        # Skip if any response had None
+        if skip_this_item:
+            continue
 
         avg_reward = np.mean(rewards_list)
         batch_rewards.append(avg_reward)
@@ -179,9 +191,28 @@ def train_step(base_model, ref_model, tokenizer, batch_questions, G, optimizer, 
         batch_idx += 1
         logger.info(color_text(f"Batch {batch_idx}: Loss => {final_loss:.4f}, Mean Reward => {avg_reward:.4f}", YELLOW))
 
-    return np.mean(losses), np.mean(batch_rewards)
+    # If the entire batch is skipped, let's avoid NaN by returning 0.0
+    mean_loss = np.mean(losses) if losses else 0.0
+    mean_reward = np.mean(batch_rewards) if batch_rewards else 0.0
+    return mean_loss, mean_reward
 
-def train_grpo(base_model, ref_model, tokenizer, data_iterator, calculate_reward, optimizer, epochs: int = 1, batch_size: int = 4, G: int = 4, device=None, verbose=False):
+def train_grpo(
+    base_model,
+    ref_model,
+    tokenizer,
+    data_iterator,
+    calculate_reward,
+    optimizer,
+    epochs: int = 1,
+    batch_size: int = 4,
+    G: int = 4,
+    device=None,
+    verbose=False
+):
+    """
+    Outer training function that runs for the specified number of epochs,
+    feeding batches from 'data_iterator' into 'train_step'.
+    """
     all_batch_losses = []
     all_batch_rewards = []
 
@@ -203,8 +234,8 @@ def train_grpo(base_model, ref_model, tokenizer, data_iterator, calculate_reward
             all_batch_losses.append(batch_loss)
             all_batch_rewards.append(batch_reward)
 
-    overall_loss = np.mean(all_batch_losses)
-    overall_reward = np.mean(all_batch_rewards)
+    overall_loss = np.mean(all_batch_losses) if all_batch_losses else 0.0
+    overall_reward = np.mean(all_batch_rewards) if all_batch_rewards else 0.0
     logger.info(color_text(f"Overall Mean Loss: {overall_loss:.4f}", GREEN))
     logger.info(color_text(f"Overall Mean Reward: {overall_reward:.4f}", GREEN))
     return overall_loss, overall_reward

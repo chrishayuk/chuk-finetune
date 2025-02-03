@@ -68,14 +68,15 @@ def main():
     prepared_dataset = prepare_prompts(dataset)
 
     # Example training usage (commented out here):
-    # def integrated_reward(response_text, item):
-    #     return combined_calculate_reward(response_text, item)
-    #
+    def integrated_reward(response_text, item):
+        return combined_calculate_reward(response_text, item)
+    
     # logger.info(color_text("===== STAGE ONE: INTEGRATED REWARD FUNCTION =====", BOLD))
-    # gen_stage1 = train_grpo(
-    #     base_model, ref_model, tokenizer, data_rendered,
-    #     integrated_reward, 1e-5, 10, 2, 2, args.device, True
-    # )
+    gen_stage1 = train_grpo(
+        base_model, ref_model, tokenizer, prepared_dataset,
+        integrated_reward, 1e-5, 10, 2, 2, args.device, True
+    )
+
     #
     # mean_loss_stage1 = consume_training_generator(gen_stage1)
     # logger.info(color_text(f"Stage One complete. Mean loss={mean_loss_stage1:.4f}", GREEN))
