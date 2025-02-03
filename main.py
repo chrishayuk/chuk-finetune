@@ -3,7 +3,7 @@
 
 # Training imports
 from reward_functions import combined_calculate_reward, set_eval_model
-from train.grpo_trainer import train_grpo
+from train.grpo.grpo_trainer import train_grpo
 
 # CLI imports
 from cli.train.arg_parser import parse_arguments

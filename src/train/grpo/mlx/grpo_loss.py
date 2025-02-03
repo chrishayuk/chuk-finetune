@@ -1,4 +1,4 @@
-# src/train/mlx/grpo_loss.py
+# src/train/grpo/mlx/grpo_loss.py
 import numpy as np
 import mlx.core as mx
 

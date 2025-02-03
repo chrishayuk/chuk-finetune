@@ -1,5 +1,4 @@
-# src/train/mlx/grpo_trainer.py
-
+# src/train/grpo/mlx/grpo_trainer.py
 import ast
 import logging
 import numpy as np
@@ -7,9 +6,10 @@ import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm import generate
 
-from train.trainer_base import Trainer  # <-- Your base Trainer interface
-from train.mlx.grpo_loss import compute_advantages, grpo_loss
-from train.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
+# imports
+from train.trainer_base import Trainer
+from train.grpo.mlx.grpo_loss import compute_advantages, grpo_loss
+from train.grpo.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
 
 # Setup minimal logging format: just the message
 logging.basicConfig(

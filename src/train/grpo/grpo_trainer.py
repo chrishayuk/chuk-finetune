@@ -33,10 +33,10 @@ def train_grpo(
 
     # 2) Dynamically import the matching GRPOTrainer
     if dev_str == "mlx":
-        from train.mlx.grpo_trainer import GRPOTrainer
+        from train.grpo.mlx.grpo_trainer import GRPOTrainer
         framework = "mlx"
     else:
-        from train.torch.grpo_trainer import GRPOTrainer
+        from train.grpo.torch.grpo_trainer import GRPOTrainer
         framework = "torch"
 
     # get the optmizer (will handle torch or mlx)

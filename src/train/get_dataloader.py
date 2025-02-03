@@ -16,15 +16,22 @@ def get_dataloader(framework: str, dataset: Any, batch_size: int, shuffle: bool 
         return torch_data_iterator
 
     elif framework == "mlx":
+        # convert the dataset to a list
         data = list(dataset)
+
+        # shuffle it, if specified
         if shuffle:
             random.shuffle(data)
 
         # Return a zero-argument function for MLX
         def mlx_data_iterator():
+            # iterate and split into batches
             for i in range(0, len(data), batch_size):
                 yield data[i : i + batch_size]
+        
+        # return the iterator
         return mlx_data_iterator
 
     else:
+        # unknown framework
         raise ValueError(f"Unknown framework: {framework}")
