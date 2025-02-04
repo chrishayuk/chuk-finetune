@@ -29,22 +29,19 @@ def gather_logprobs(logits, input_ids):
     return total_logprob[None]
 
 def gather_kl_divergence(current_logits, ref_logits, input_ids):
-    """
-    MLX version of KL. Same pattern: input_ids is a list, so do len(input_ids).
-    """
-    current_logsumexp = mx.logsumexp(current_logits, axis=-1, keepdims=True)
-    current_logprobs  = current_logits - current_logsumexp
+    current_lse = mx.logsumexp(current_logits, axis=-1, keepdims=True)
+    current_logprobs = current_logits - current_lse
+    ref_lse = mx.logsumexp(ref_logits, axis=-1, keepdims=True)
+    ref_logprobs = ref_logits - ref_lse
 
-    ref_logsumexp = mx.logsumexp(ref_logits, axis=-1, keepdims=True)
-    ref_logprobs   = ref_logits - ref_logsumexp
-
-    seq_len = len(input_ids)  # fix
+    seq_len = len(input_ids)
     total_kl = mx.array(0.0, mx.float32)
-
     for t in range(seq_len):
         token_id = input_ids[t]
-        p_x = mx.exp(current_logprobs[0, t, token_id])
-        log_ratio = current_logprobs[0, t, token_id] - ref_logprobs[0, t, token_id]
-        total_kl += p_x * log_ratio
+        log_diff = current_logprobs[0, t, token_id] - ref_logprobs[0, t, token_id]
+        total_kl += log_diff
+    
+    # Optionally normalise by seq_len
+    return (total_kl / seq_len)[None]
 
-    return total_kl[None]
+

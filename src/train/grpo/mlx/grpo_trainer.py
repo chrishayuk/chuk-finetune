@@ -8,6 +8,7 @@ from mlx_lm import generate
 
 # imports
 from train.trainer_base import Trainer
+from train.custom_generate_mlx import greedy_generate 
 from train.grpo.mlx.grpo_loss import compute_advantages, grpo_loss
 from train.grpo.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
 
@@ -44,13 +45,15 @@ def generate_single_response_and_oldlogprob(model, tokenizer, prompt: str, verbo
     """
     Generates a single response and computes its 'old' log-prob with the current model.
     """
-    response_text = generate(
+
+    response_text = greedy_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_tokens=200,
-        verbose=False
+        max_tokens=1000
     ).strip()
+
+    response_text = "<think>" + response_text
 
     if verbose:
         logger.info(color_text(f"Model: {response_text}", CYAN))

@@ -62,7 +62,7 @@ def main():
 
     # Load the dataset (prompts + verifiers).
     logger.info("Loading dataset (prompts + verifiers)...")
-    dataset = load_prompts_and_verifiers("dataset/zero/math_very_easy.jsonl")
+    dataset = load_prompts_and_verifiers("dataset/zero/verifier_samples_very_easy.jsonl")
 
     # prepare and transform prompts using our new function.
     prepared_dataset = prepare_prompts(dataset)
@@ -78,7 +78,7 @@ def main():
         tokenizer=tokenizer,
         dataset=prepared_dataset,
         calculate_reward=integrated_reward,
-        lr=1e-5,         # Learning rate
+        lr=1e-6,         # Learning rate
         epochs=10,       # Number of epochs
         batch_size=2,    # Batch size
         G=2,             # Generate 2 responses per prompt

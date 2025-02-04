@@ -24,6 +24,8 @@ def load_models(model_name, device_override):
         # set the device for reference model
         ref_model.to(device)
         ref_model.eval()
+    else:
+        ref_model.freeze()
 
     # return the base model, reference model, tokenizer and device
     return base_model, ref_model, tokenizer, device
