@@ -4,13 +4,11 @@ import logging
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm import generate
 
 # imports
+from train.grpo.mlx.grpo_generation import generate_single_response_and_oldlogprob
 from train.trainer_base import Trainer
-from train.custom_generate_mlx import greedy_generate 
-from train.grpo.mlx.grpo_loss import compute_advantages, grpo_loss
-from train.grpo.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
+from train.grpo.mlx.grpo_loss import single_question_loss
 
 # Setup minimal logging format: just the message
 logging.basicConfig(
@@ -41,125 +39,10 @@ def ensure_dict(item):
             pass
     raise ValueError(f"[ERROR] Unexpected non-dict item: {item}")
 
-def generate_single_response_and_oldlogprob(model, tokenizer, prompt: str, verbose=False):
-    """
-    Generates a single response and computes its 'old' log-prob with the current model.
-    """
-
-    response_text = greedy_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=prompt,
-        max_tokens=1000
-    ).strip()
-
-    response_text = "<think>" + response_text
-
-    if verbose:
-        logger.info(color_text(f"Model: {response_text}", CYAN))
-
-    tokens = tokenizer.encode(response_text)
-    if not tokens:
-        logger.warning("[WARN] Empty token sequence encountered, using fallback.")
-        tokens = [tokenizer.eos_token_id]
-
-    logits = model(mx.array(tokens, mx.uint32)[None])
-    sum_lp = float(gather_logprobs(logits, tokens))
-    return response_text, sum_lp
-
-def compute_grpo_loss(
-    model, 
-    ref_model, 
-    tokenizer, 
-    item, 
-    responses, 
-    old_logprobs, 
-    rewards, 
-    kl_coeff=0.1,
-    verbose=False
-):
-    """
-    Computes a GRPO/PPO-style loss using KL from ref_model. 
-    """
-    advantages_arr = compute_advantages(rewards)
-    if verbose:
-        logger.info(f"Rewards: {rewards}")
-        logger.info(f"Advantages: {advantages_arr}")
-
-    current_list = []
-    kl_list = []
-
-    for resp in responses:
-        tokens = tokenizer.encode(resp)
-        if not tokens:
-            logger.warning("[WARN] Empty token sequence; fallback to eos token.")
-            tokens = [tokenizer.eos_token_id]
-
-        out_current = model(mx.array(tokens, mx.uint32)[None])
-        sum_current = gather_logprobs(out_current, tokens)
-
-        out_ref = ref_model(mx.array(tokens, mx.uint32)[None])
-        kl_val = gather_kl_divergence(out_current, out_ref, tokens)
-
-        current_list.append(sum_current)
-        kl_list.append(kl_val)
-
-    logprobs_current_sums = mx.concat(current_list, axis=0)
-    kl_sums = mx.concat(kl_list, axis=0)
-
-    old_sums = mx.array(old_logprobs)
-    advantages_m = mx.array(advantages_arr)
-
-    loss_val = grpo_loss(
-        logprobs_current=logprobs_current_sums,
-        logprobs_old=old_sums,
-        advantages=advantages_m,
-        kl_divergences=kl_sums,
-        kl_coeff=kl_coeff
-    )
-    return loss_val
-
-def single_question_loss(
-    model, 
-    ref_model, 
-    tokenizer, 
-    item, 
-    responses, 
-    old_logprobs, 
-    rewards, 
-    kl_coeff=0.1,
-    verbose=False
-):
-    """
-    Simple wrapper that calls 'compute_grpo_loss' for a single question.
-    """
-    return compute_grpo_loss(
-        model=model,
-        ref_model=ref_model,
-        tokenizer=tokenizer,
-        item=item,
-        responses=responses,
-        old_logprobs=old_logprobs,
-        rewards=rewards,
-        kl_coeff=kl_coeff,
-        verbose=verbose
-    )
-
 class GRPOTrainer(Trainer):
     """
-    GRPO Trainer for MLX that inherits from your base `Trainer`.
-
-    :param model: Trainable model to be updated.
-    :param ref_model: Reference model (typically fixed).
-    :param tokenizer: Your tokenizer instance.
-    :param optimizer: The optimizer to apply updates.
-    :param calculate_reward: Callable returning (score, feedback) for a given response & item.
-    :param G: Number of responses to generate per prompt.
-    :param kl_coeff: Weighting for the KL penalty.
-    :param device: Optional device string if relevant.
-    :param verbose: Whether to log additional details.
+    GRPO Trainer for MLX
     """
-
     def __init__(
         self,
         model,
@@ -172,13 +55,15 @@ class GRPOTrainer(Trainer):
         device=None,
         verbose=False
     ):
+        # call parent constructor
         super().__init__(model, tokenizer, optimizer, verbose=verbose)
+
+        # set properties
         self.ref_model = ref_model
         self.calculate_reward = calculate_reward
         self.G = G
         self.kl_coeff = kl_coeff
-        self.device = device  # if needed
-        # Any additional initialisation if required
+        self.device = device
 
     def prepare_batch_data(self, batch_questions):
         """
@@ -290,29 +175,3 @@ class GRPOTrainer(Trainer):
         ))
 
         return float(batch_loss), final_reward
-
-    def train_epoch(self, data_iterator, batch_size=4):
-        """
-        Optional convenience method if you prefer an "epoch-based" approach
-        rather than a fully generic loop. Repeatedly fetches batches
-        from data_iterator, calls prepare_batch_data and train_step.
-        """
-        all_batch_losses = []
-        all_batch_rewards = []
-
-        for batch_questions in data_iterator(batch_size):
-            # Prepare data
-            batch_data = self.prepare_batch_data(batch_questions)
-            # Train
-            batch_loss, batch_reward = self.train_step(batch_data)
-            all_batch_losses.append(batch_loss)
-            all_batch_rewards.append(batch_reward)
-
-        overall_loss = float(np.mean(all_batch_losses)) if all_batch_losses else 0.0
-        overall_reward = float(np.mean(all_batch_rewards)) if all_batch_rewards else 0.0
-
-        logger.info(color_text(
-            f"\n[GRPO] Epoch => Mean Loss: {overall_loss:.4f}, Mean Reward: {overall_reward:.4f}",
-            GREEN
-        ))
-        return overall_loss, overall_reward

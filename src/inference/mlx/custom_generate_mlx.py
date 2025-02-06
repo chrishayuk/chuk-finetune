@@ -1,9 +1,7 @@
 # src/train/grpo/mlx/custom_generate_mlx.py
-
-import math
 import mlx.core as mx
 
-def greedy_generate(model, tokenizer, prompt, max_tokens=200):
+def greedy_generate(model, tokenizer, prompt, max_tokens=2000):
     """
     Generates text token-by-token using a purely greedy approach 
     (i.e., always picking argmax of the logits).
