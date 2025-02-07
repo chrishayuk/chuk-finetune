@@ -15,7 +15,7 @@ def color_text(text, color):
 
 # set the logging config level
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(message)s",
     datefmt="%H:%M:%S",
     stream=sys.stdout
