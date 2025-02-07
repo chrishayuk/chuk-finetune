@@ -1,6 +1,6 @@
 # src/train/grpo_trainer.py
 from train.optimizer_loader import get_optimizer
-from train.get_dataloader import get_dataloader
+from train.dataset_loader import get_dataloader
 from train.generic_train import generic_train
 
 # imports
