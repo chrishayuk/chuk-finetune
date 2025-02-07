@@ -1,4 +1,4 @@
-# prompt_handler.py
+# src/cli/train/prompt_handler.py
 from cli.train.prompt_renderer import PromptRenderer
 
 def prepare_prompts(dataset):

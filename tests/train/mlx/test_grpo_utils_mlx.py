@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import mlx.core as mx
 
-from src.train.mlx.grpo_utils import (
+from src.train.grpo.mlx.grpo_loss import (
     gather_logprobs,
     gather_kl_divergence
 )

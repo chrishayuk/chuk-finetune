@@ -1,159 +1,216 @@
-# src/train/torch/grpo_trainer.py
+# src/train/grpo/torch/grpo_trainer.py
 import torch
 import numpy as np
 
-from train.torch.grpo_utils import gather_logprobs, gather_kl_divergence
-from train.torch.grpo_loss import compute_advantages, grpo_loss
+# imports
+from train.trainer_base import Trainer
+from train.grpo.torch.grpo_utils import gather_logprobs, gather_kl_divergence
+from train.grpo.torch.grpo_loss import compute_advantages, grpo_loss
 
-def train_step(
-    base_model,
-    ref_model,
-    tokenizer,
-    batch_questions,
-    verifier,
-    G,
-    optimizer,
-    calculate_reward,
-    device,
-    verbose=False
-):
+def ensure_dict(item):
     """
-    Single training step over one batch of questions.
+    Parallels the MLX ensure_dict(...) utility.
+    Ensures the input is a dict (or attempts to parse if it's a JSON-like string).
     """
-    losses = []
+    if isinstance(item, dict):
+        return item
+    if isinstance(item, str) and item.strip().startswith("{"):
+        import ast
+        try:
+            possible_dict = ast.literal_eval(item)
+            if isinstance(possible_dict, dict):
+                return possible_dict
+        except:
+            pass
+    # If no success, assume the prompt is just a raw string
+    return {"prompt": item}
 
-    for i, question in enumerate(batch_questions):
-        if verbose:
-            print(f"\n--- Torch GRPO step, item {i} ---")
-            print(f"Question: {question}")
 
-        inputs = tokenizer(question, return_tensors="pt")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+class TorchGRPOTrainer(Trainer):
+    """
+    A class-based GRPO Trainer for Torch, mirroring the MLX version
+    but using PyTorch operators and logic.
+    """
+    def __init__(
+        self,
+        model,
+        ref_model,
+        tokenizer,
+        optimizer,
+        calculate_reward,
+        G=4,
+        kl_coeff=0.1,
+        device=None,
+        verbose=False
+    ):
+        super().__init__(model, tokenizer, optimizer, verbose=verbose)
 
-        outputs = base_model.generate(
-            **inputs,
-            num_return_sequences=G,
-            max_length=200,
-            do_sample=True,
-            top_p=0.95,
-            top_k=50,
-            temperature=0.7
-        )
-        responses = [tokenizer.decode(o.cpu(), skip_special_tokens=True) for o in outputs]
+        self.ref_model = ref_model
+        self.calculate_reward = calculate_reward
+        self.G = G
+        self.kl_coeff = kl_coeff
+        self.device = device if device is not None else torch.device("cpu")
+        self.verbose = verbose
 
-        # Print out the generated responses
-        if verbose:
-            print("Generated responses:")
-            for idx, resp in enumerate(responses, start=1):
-                print(f"  Response {idx}: {resp}")
+    def prepare_batch_data(self, batch_questions):
+        """
+        Receives a list of items (each might be a dict or raw string).
+        For each item:
+          - Generate G responses
+          - Compute "old" log-probs (from the same model used for generation)
+          - Compute rewards
+          - If reward == None, skip that item
+        Returns a list of dicts with:
+          {
+            "item": original_item_dict,
+            "responses": [...],
+            "old_logprobs": [...],
+            "rewards": [...]
+          }
+        """
+        batch_data = []
 
-        # 2) Compute old log-probs
-        logprobs_old_sums = []
-        with torch.no_grad():
-            for resp in responses:
-                resp_inputs = tokenizer(resp, return_tensors="pt")
-                resp_inputs = {k: v.to(device) for k, v in resp_inputs.items()}
-                out = base_model(**resp_inputs)
-                sum_logprob = gather_logprobs(out.logits, resp_inputs["input_ids"])
-                logprobs_old_sums.append(sum_logprob.item())
+        for i, raw_item in enumerate(batch_questions):
+            item = ensure_dict(raw_item)
+            prompt = item["prompt"].strip()
 
-        # 3) Rewards + advantages
-        rewards = [calculate_reward(r, verifier) for r in responses]
-        advantages_arr = compute_advantages(rewards)
-        if verbose:
-            print(f"Rewards: {rewards}")
-            print(f"Advantages: {advantages_arr}")
+            if self.verbose:
+                print(f"\n=== Prompt {i} ===")
+                print(prompt)
 
-        # 4) Current log-probs + KL
-        current_list = []
-        kl_list = []
-        for resp in responses:
-            resp_inputs = tokenizer(resp, return_tensors="pt")
-            resp_inputs = {k: v.to(device) for k, v in resp_inputs.items()}
+            # 1) Generate G responses
+            # Instead of .to(self.device) on the entire dict, map its contents
+            tokenized = self.tokenizer(prompt, return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in tokenized.items()}
+            outputs = self.model.generate(
+                **inputs,
+                num_return_sequences=self.G,
+                max_length=128,
+                do_sample=True,
+                top_p=0.95,
+                top_k=50,
+                temperature=0.7
+            )
+            responses = [
+                self.tokenizer.decode(o.cpu(), skip_special_tokens=True)
+                for o in outputs
+            ]
 
-            out_current = base_model(**resp_inputs)
-            sum_current = gather_logprobs(out_current.logits, resp_inputs["input_ids"])
+            old_logprobs = []
+            rewards_list = []
+            skip_this_item = False
 
+            # 2) Compute old log-probs & rewards
             with torch.no_grad():
-                out_ref = ref_model(**resp_inputs)
+                for resp_idx, resp in enumerate(responses):
+                    tokenized_resp = self.tokenizer(resp, return_tensors="pt")
+                    resp_inputs = {k: v.to(self.device) for k, v in tokenized_resp.items()}
+                    
+                    out = self.model(**resp_inputs)
+                    sum_logprob = gather_logprobs(out.logits, resp_inputs["input_ids"])
+                    old_logprobs.append(sum_logprob.item())
 
-            kl_val = gather_kl_divergence(
-                out_current.logits,
-                out_ref.logits,
-                resp_inputs["input_ids"]
+                    # Reward function expects: (resp, item)
+                    score, feedback_text = self.calculate_reward(resp, item)
+                    if score is None:
+                        if self.verbose:
+                            print(f"[SKIP] No reward for response {resp_idx}: '{resp}'")
+                        skip_this_item = True
+                        break
+                    rewards_list.append(score)
+
+            if skip_this_item:
+                continue
+
+            # 3) Accumulate in batch_data
+            batch_data.append({
+                "item": item,
+                "responses": responses,
+                "old_logprobs": old_logprobs,
+                "rewards": rewards_list,
+            })
+
+        return batch_data
+
+    def train_step(self, batch_data):
+        """
+        Aggregates the GRPO loss across items in batch_data:
+          - For each item, re-computes new log-probs & KL vs ref_model
+          - Calculates advantage from item["rewards"]
+          - Averages losses across items, single backward + optimizer step
+          Returns (loss, mean_reward) as floats.
+        """
+        if not batch_data:
+            return 0.0, 0.0
+
+        total_loss = 0.0
+        valid_count = 0
+        all_rewards = []
+
+        # Zero-grad once before accumulating
+        self.optimizer.zero_grad()
+
+        for i, data_item in enumerate(batch_data):
+            responses = data_item["responses"]
+            old_logprobs = data_item["old_logprobs"]
+            rewards = data_item["rewards"]
+            all_rewards.extend(rewards)
+
+            if not responses:
+                continue
+
+            # 1) Compute advantage
+            advantages_arr = compute_advantages(rewards)  # shape [G]
+
+            # 2) Recompute new log-probs & KL
+            current_logprobs = []
+            kl_values = []
+
+            for resp in responses:
+                tokenized_resp = self.tokenizer(resp, return_tensors="pt")
+                resp_inputs = {k: v.to(self.device) for k, v in tokenized_resp.items()}
+
+                out_current = self.model(**resp_inputs)
+                sum_logprob = gather_logprobs(out_current.logits, resp_inputs["input_ids"])
+                current_logprobs.append(sum_logprob)
+
+                with torch.no_grad():
+                    out_ref = self.ref_model(**resp_inputs)
+                kl_val = gather_kl_divergence(
+                    out_current.logits,
+                    out_ref.logits,
+                    resp_inputs["input_ids"]
+                )
+                kl_values.append(kl_val)
+
+            # Convert lists to Tensors
+            logprobs_current_sums = torch.cat(current_logprobs, dim=0)  # shape [G]
+            kl_sums = torch.cat(kl_values, dim=0)                      # shape [G]
+            old_sums_t = torch.tensor(old_logprobs, dtype=torch.float32, device=self.device)
+            adv_t = torch.tensor(advantages_arr, dtype=torch.float32, device=self.device)
+
+            # 3) Compute GRPO loss for this item
+            item_loss = grpo_loss(
+                logprobs_current=logprobs_current_sums,
+                logprobs_old=old_sums_t,
+                advantages=adv_t,
+                kl_divergences=kl_sums,
+                kl_coeff=self.kl_coeff
             )
 
-            current_list.append(sum_current)
-            kl_list.append(kl_val)
+            total_loss += item_loss
+            valid_count += 1
 
-        logprobs_current_sums = torch.cat(current_list, dim=0)
-        kl_sums = torch.cat(kl_list, dim=0)
-        old_sums_t = torch.tensor(logprobs_old_sums, dtype=torch.float32, device=device)
-        adv_t = torch.tensor(advantages_arr, dtype=torch.float32, device=device)
+        if valid_count > 0:
+            total_loss = total_loss / valid_count
 
-        # 5) Compute GRPO loss, backprop, step optimizer
-        loss_val = grpo_loss(
-            logprobs_current=logprobs_current_sums,
-            logprobs_old=old_sums_t,
-            advantages=adv_t,
-            kl_divergences=kl_sums
-        )
-        optimizer.zero_grad()
-        loss_val.backward()
-        optimizer.step()
+        total_loss.backward()
+        self.optimizer.step()
 
-        losses.append(loss_val.item())
-        if verbose:
-            print(f"Loss (item {i}): {loss_val.item():.4f}")
+        mean_loss = float(total_loss.item())
+        mean_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 
-    return np.mean(losses)
+        if self.verbose:
+            print(f"[Torch GRPO] Batch Update => Loss: {mean_loss:.4f}, Reward: {mean_reward:.4f}")
 
-
-def train_grpo(
-    base_model,
-    ref_model,
-    tokenizer,
-    verifier,
-    data_loader,         # This is your Torch DataLoader
-    calculate_reward,
-    optimizer,
-    epochs: int = 1,
-    batch_size: int = 4,
-    G: int = 4,
-    device=None,
-    verbose=False
-):
-    """
-    High-level Torch GRPO training function. Iterates over 'epochs',
-    loops over data_loader, calls train_step(...) for each batch,
-    and returns the mean loss across all epochs.
-    """
-    all_epoch_losses = []
-
-    for epoch in range(epochs):
-        if verbose:
-            print(f"[Torch] Starting epoch {epoch+1}/{epochs}...")
-        epoch_losses = []
-
-        for batch_questions in data_loader:
-            # The 'batch_questions' should be a list/tuple of strings from your DataLoader
-            batch_loss = train_step(
-                base_model=base_model,
-                ref_model=ref_model,
-                tokenizer=tokenizer,
-                batch_questions=batch_questions,
-                verifier=verifier,
-                G=G,
-                optimizer=optimizer,
-                calculate_reward=calculate_reward,
-                device=device,
-                verbose=verbose
-            )
-            epoch_losses.append(batch_loss)
-
-        avg_loss = np.mean(epoch_losses)
-        all_epoch_losses.append(avg_loss)
-        if verbose:
-            print(f"[Torch] Epoch {epoch+1} -> Mean loss: {avg_loss:.4f}")
-
-    return np.mean(all_epoch_losses)
+        return mean_loss, mean_reward

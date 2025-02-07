@@ -4,8 +4,8 @@ import pytest
 import numpy as np
 import torch
 
-from src.train.torch.grpo_loss import compute_advantages as torch_compute_advantages
-from src.train.torch.grpo_loss import grpo_loss as torch_grpo_loss
+from src.train.grpo.torch.grpo_loss import compute_advantages as torch_compute_advantages
+from src.train.grpo.torch.grpo_loss import grpo_loss as torch_grpo_loss
 
 @pytest.mark.parametrize("rewards", [
     [1.0, 2.0, 3.0],

@@ -4,7 +4,7 @@ import pytest
 import torch
 import numpy as np
 
-from src.train.torch.grpo_utils import gather_logprobs, gather_kl_divergence
+from src.train.grpo.torch.grpo_utils import gather_logprobs, gather_kl_divergence
 
 def test_gather_logprobs_small():
     """

@@ -5,8 +5,8 @@ import numpy as np
 
 import mlx.core as mx
 
-from src.train.mlx.grpo_loss import compute_advantages as mlx_compute_advantages
-from src.train.mlx.grpo_loss import grpo_loss as mlx_grpo_loss
+from src.train.grpo.mlx.grpo_loss import compute_advantages as mlx_compute_advantages
+from src.train.grpo.mlx.grpo_loss import grpo_loss as mlx_grpo_loss
 
 @pytest.mark.parametrize("rewards", [
     [1.0, 2.0, 3.0],

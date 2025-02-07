@@ -1,4 +1,4 @@
-# prompt_renderer.py
+# src/cli/train/prompt_renderer.py
 from jinja2 import Environment, FileSystemLoader
 
 class PromptRenderer:

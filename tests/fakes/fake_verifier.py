@@ -4,9 +4,15 @@ class FakeVerifier:
         # Just check if the string contains "good".
         return "good" in answer.lower()
 
-def fake_calculate_reward(response: str, verifier) -> float:
+def fake_calculate_reward(response: str, item: dict):
     """
-    Simple "reward" function: +1 if verifier says good,
-    else 0. Or random, etc.
+    Expects item like {"prompt": "...", "verifiers": [...]}
+    Returns (score, feedback_text).
     """
-    return 1.0 if verifier.check(response) else 0.0
+    # If the item has a non-empty "verifiers" list, give +1
+    if item.get("verifiers"):
+        return (1.0, "Found verifiers => +1")
+    else:
+        return (0.0, "No verifiers => +0")
+
+

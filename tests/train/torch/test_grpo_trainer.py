@@ -3,16 +3,15 @@
 import pytest
 import torch
 
-from src.train.torch.grpo_trainer import train_step
-
-# Our fakes
+from src.train.grpo.torch.grpo_trainer import TorchGRPOTrainer
 from tests.fakes.fake_torch_model import FakeTorchModel
 from tests.fakes.fake_torch_tokenizer import FakeTorchTokenizer
-from tests.fakes.fake_verifier import FakeVerifier, fake_calculate_reward
+from tests.fakes.fake_verifier import fake_calculate_reward
 
-def test_train_step_smoke():
+
+def test_grpo_trainer_smoke():
     """
-    Smoke test to ensure train_step(...) runs end-to-end without error,
+    Smoke test to ensure TorchGRPOTrainer runs end-to-end without error,
     using minimal fake objects.
     """
     device = torch.device("cpu")
@@ -21,32 +20,40 @@ def test_train_step_smoke():
     ref_model  = FakeTorchModel(vocab_size=vocab_size).to(device)
 
     tokenizer = FakeTorchTokenizer(vocab_size=vocab_size)
-    verifier = FakeVerifier()
 
-    # create a small Torch optimizer
+    # Create a small Torch optimizer
     optimizer = torch.optim.Adam(base_model.parameters(), lr=1e-3)
 
-    # define a small batch of questions
+    # Define a small batch of questions
     batch_questions = [
         "Hello world",
         "What is the meaning of life?",
     ]
     G = 2
 
-    loss_val = train_step(
-        base_model=base_model,
+    # Create the trainer
+    trainer = TorchGRPOTrainer(
+        model=base_model,
         ref_model=ref_model,
         tokenizer=tokenizer,
-        batch_questions=batch_questions,
-        verifier=verifier,
-        G=G,
         optimizer=optimizer,
         calculate_reward=fake_calculate_reward,
+        G=G,
+        kl_coeff=0.1,
         device=device,
         verbose=True
     )
-    # Just check it's a finite float
-    assert isinstance(loss_val, float)
-    assert torch.isfinite(torch.tensor(loss_val)), "Loss is not finite"
 
-    print(f"Mean loss from train_step: {loss_val}")
+    # Prepare batch data
+    data_items = [{"prompt": q} for q in batch_questions]
+    batch_data = trainer.prepare_batch_data(data_items)
+
+    # Train step
+    loss_val, reward_val = trainer.train_step(batch_data)
+
+    # Check results
+    assert isinstance(loss_val, float), "Loss should be a float."
+    assert torch.isfinite(torch.tensor(loss_val)), "Loss is not finite."
+    assert isinstance(reward_val, float), "Reward should be a float."
+
+    print(f"Mean loss from train_step: {loss_val}, mean reward: {reward_val}")
