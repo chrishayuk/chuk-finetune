@@ -11,9 +11,13 @@ def ensure_dict(item):
     """
     Parallels the MLX ensure_dict(...) utility.
     Ensures the input is a dict (or attempts to parse if it's a JSON-like string).
+    If we spot code-like patterns (e.g., 'prompt =') or the literal 'prompt', we skip it by returning None.
     """
+    # 1) If it's already a dict, just return it
     if isinstance(item, dict):
         return item
+
+    # 2) If it's a JSON-like string, try parsing
     if isinstance(item, str) and item.strip().startswith("{"):
         import ast
         try:
@@ -22,11 +26,22 @@ def ensure_dict(item):
                 return possible_dict
         except:
             pass
-    # If no success, assume the prompt is just a raw string
-    return {"prompt": item}
+
+    # 3) If it's a plain string, do a quick check for code or an unwanted "prompt"
+    if isinstance(item, str):
+        txt = item.strip().lower()
+        # If there's code-like pattern or it's exactly "prompt", return None => skip
+        if "prompt =" in txt or txt == "prompt":
+            return None
+
+        # Otherwise, treat this as our raw prompt
+        return {"prompt": item}
+
+    # If it doesn't fit any known pattern, skip
+    return None
 
 
-class TorchGRPOTrainer(Trainer):
+class GRPOTrainer(Trainer):
     """
     A class-based GRPO Trainer for Torch, mirroring the MLX version
     but using PyTorch operators and logic.
@@ -54,24 +69,21 @@ class TorchGRPOTrainer(Trainer):
 
     def prepare_batch_data(self, batch_questions):
         """
-        Receives a list of items (each might be a dict or raw string).
+        Receives a list of items (each might be a dict or a raw string).
         For each item:
-          - Generate G responses
-          - Compute "old" log-probs (from the same model used for generation)
-          - Compute rewards
-          - If reward == None, skip that item
-        Returns a list of dicts with:
-          {
-            "item": original_item_dict,
-            "responses": [...],
-            "old_logprobs": [...],
-            "rewards": [...]
-          }
+          - Skip if ensure_dict(...) returns None.
+          - Otherwise, interpret item["prompt"] as the question, generate G responses, compute rewards.
         """
         batch_data = []
 
         for i, raw_item in enumerate(batch_questions):
             item = ensure_dict(raw_item)
+            # Skip items that came back None (code, literal "prompt", invalid JSON, etc.)
+            if item is None:
+                if self.verbose:
+                    print(f"[SKIP] Invalid or code-like item => {raw_item}")
+                continue
+
             prompt = item["prompt"].strip()
 
             if self.verbose:
@@ -79,7 +91,6 @@ class TorchGRPOTrainer(Trainer):
                 print(prompt)
 
             # 1) Generate G responses
-            # Instead of .to(self.device) on the entire dict, map its contents
             tokenized = self.tokenizer(prompt, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in tokenized.items()}
             outputs = self.model.generate(
@@ -105,7 +116,7 @@ class TorchGRPOTrainer(Trainer):
                 for resp_idx, resp in enumerate(responses):
                     tokenized_resp = self.tokenizer(resp, return_tensors="pt")
                     resp_inputs = {k: v.to(self.device) for k, v in tokenized_resp.items()}
-                    
+
                     out = self.model(**resp_inputs)
                     sum_logprob = gather_logprobs(out.logits, resp_inputs["input_ids"])
                     old_logprobs.append(sum_logprob.item())

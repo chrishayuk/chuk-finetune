@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from src.train.grpo.torch.grpo_trainer import TorchGRPOTrainer
+from src.train.grpo.torch.grpo_trainer import GRPOTrainer
 from tests.fakes.fake_torch_model import FakeTorchModel
 from tests.fakes.fake_torch_tokenizer import FakeTorchTokenizer
 from tests.fakes.fake_verifier import fake_calculate_reward
@@ -32,7 +32,7 @@ def test_grpo_trainer_smoke():
     G = 2
 
     # Create the trainer
-    trainer = TorchGRPOTrainer(
+    trainer = GRPOTrainer(
         model=base_model,
         ref_model=ref_model,
         tokenizer=tokenizer,

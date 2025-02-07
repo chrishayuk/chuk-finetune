@@ -1,48 +1,65 @@
 # src/model/model_loader.py
 import logging
+
 logger = logging.getLogger(__name__)
 
-def load_model_and_tokenizer(model_name_or_path: str, device_override: str = None):
+def load_model_and_tokenizer(
+    model_name_or_path: str,
+    device_override: str = None,
+    torch_dtype=None
+):
     """
-    Load a model and tokenizer using either Torch or MLX, depending on device_override.
+    Load a model + tokenizer via MLX or Torch, returning (model, tokenizer, is_mlx).
+    If MLX is used, is_mlx=True; otherwise Torch returns is_mlx=None (falsy).
+    """
 
-    If device_override == "mlx", use Apple MLX logic and return a flag indicating MLX usage.
-    Otherwise, assume Torch for "cpu", "cuda", "mps", or None and return False.
-    """
     if device_override == "mlx":
-        # ------------------ MLX Path ------------------
         import mlx.nn as nn
         from mlx_lm import load as mlx_load
 
-        # load the model
         logger.info("Using MLX. Loading model/tokenizer from %s...", model_name_or_path)
         model, tokenizer = mlx_load(model_name_or_path)
 
-        # MLX manages devices differently, so we return a flag indicating MLX is in use.
+        # Return (model, tokenizer, True) to indicate MLX usage
         return model, tokenizer, True
 
     else:
-        # ------------------ Torch Path ------------------
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         logger.info("Using Torch. Loading model/tokenizer from %s...", model_name_or_path)
 
-        # Determine the device if not passed
+        # Decide a default device if none passed in
         if device_override is None:
-            # Auto-detect: use CUDA if available, else CPU
-            device_override = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                device_override = "cuda"
+            elif getattr(torch.backends.mps, "is_available", lambda: False)():
+                device_override = "mps"
+            else:
+                device_override = "cpu"
 
-        # get the torch device
-        device = torch.device(device_override)
+        # Choose default torch_dtype if not provided
+        if torch_dtype is None:
+            if device_override in ("cuda", "mps"):
+                torch_dtype = torch.float16
+            else:
+                torch_dtype = torch.float32
 
-        # Load the model and move it to the correct device
-        model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype="auto")
-        model.to(device)
+        logger.info(f"device_override={device_override}, torch_dtype={torch_dtype}")
+
+        # Use device_map="auto" for Qwen on MPS or multi-GPU
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            torch_dtype=torch_dtype,
+            device_map="auto",
+            trust_remote_code=True
+        )
         model.eval()
 
-        # Load the tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name_or_path,
+            trust_remote_code=True
+        )
 
-        # return the model, tokenizer
-        return model, tokenizer, False
+        # Return (model, tokenizer, None) to indicate Torch usage
+        return model, tokenizer, None

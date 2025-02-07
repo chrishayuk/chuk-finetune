@@ -2,7 +2,6 @@
 # main.py
 
 # Training imports
-from cli.train.training_monitor import monitor_training_progress
 from reward_functions import combined_calculate_reward, set_eval_model
 from train.grpo.grpo_trainer import train_grpo
 
@@ -10,10 +9,9 @@ from train.grpo.grpo_trainer import train_grpo
 from cli.train.arg_parser import parse_arguments
 from cli.train.logger_config import YELLOW, logger, color_text, BOLD, GREEN
 from cli.train.model_loader import load_models
-
-# Dataset and prompt-handling imports
-from cli.train.verifiers_dataset_loader import load_prompts_and_verifiers
+from cli.train.training_monitor import monitor_training_progress
 from cli.train.prompt_handler import prepare_prompts
+from cli.train.verifiers_dataset_loader import load_prompts_and_verifiers
 
 def main():
     # Parse CLI arguments.
@@ -47,7 +45,7 @@ def main():
         G=2,             # Generate 2 responses per prompt
         device=args.device,
         verbose=True,
-        as_generator=True  # <--- IMPORTANT: we want the generator
+        as_generator=False  # <--- IMPORTANT: we want the generator
     )
 
     # Pass the generator to your consumer function

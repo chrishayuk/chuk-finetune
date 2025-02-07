@@ -1,32 +1,36 @@
-# src/train/model_loader.py
+# src/cli/train/model_loader.py
 from cli.train.logger_config import logger, color_text, BOLD
 from model.model_loader import load_model_and_tokenizer
+import torch
 
 def load_models(model_name, device_override):
-    # load the base model and tokenizer
     logger.info(color_text(f"Loading base model & tokenizer: {model_name}", BOLD))
 
-    # load the model and tokenizer
-    base_model, tokenizer, device = load_model_and_tokenizer(
+    # 1) Load the base model & tokenizer
+    base_model, tokenizer, is_mlx_base = load_model_and_tokenizer(
         model_name_or_path=model_name,
-        device_override=device_override
+        device_override=device_override,
     )
 
-    # load the reference model and tokenizer
+    # 2) Load the reference model & tokenizer
     logger.info("Loading reference model (KL/PPO) ...")
-    ref_model, _, _ = load_model_and_tokenizer(
+    ref_model, _, is_mlx_ref = load_model_and_tokenizer(
         model_name_or_path=model_name,
-        device_override=device_override
+        device_override=device_override,
     )
 
-    # check if we're not mlx
-    if device_override != "mlx" and device is not None:
-        # set the device for reference model
-        ref_model.to(device)
-        ref_model.eval()
-    else:
-        # freeze the model (equivalent to eval in mlx)
+    # 3) If reference model is MLX, freeze it; else (Torch), just do .eval().
+    if is_mlx_ref:
+        # MLX model
         ref_model.freeze()
+    else:
+        # Torch model => .eval()
+        # You can skip .to(device) if device_map="auto" is used.
+        ref_model.eval()
 
-    # return the base model, reference model, tokenizer and device
-    return base_model, ref_model, tokenizer, device
+        # If you are NOT using device_map="auto" and have a single device in mind:
+        # device = torch.device(device_override)  # or some logic
+        # ref_model.to(device)
+
+    # Return everything. If device_map="auto" is used, there's no single device to return.
+    return base_model, ref_model, tokenizer, None
