@@ -99,7 +99,7 @@ def remote_calculate_reward(response_text: str, item: dict) -> float or None:
 
         score = data.get("score", 0.0)
         feedback = data.get("feedback", [])
-        logger.debug(f"Verifier score: {score}, feedback: {feedback}")
+        logger.info(f"Verifier score: {score}, feedback: {feedback}")
         return score
     except requests.RequestException as e:
         logger.warning(f"Error sending request to remote verifier: {e}")

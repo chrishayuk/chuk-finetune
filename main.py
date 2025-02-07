@@ -35,7 +35,7 @@ def main():
 
     # Load the dataset (prompts + verifiers).
     logger.info("Loading dataset (prompts + verifiers)...")
-    dataset = load_prompts_and_verifiers("dataset/zero/verifier_samples_very_easy.jsonl")
+    dataset = load_prompts_and_verifiers("dataset/zero/verifier_2_samples_very_easy.jsonl")
 
     # Prepare and transform prompts
     prepared_dataset = prepare_prompts(dataset)
