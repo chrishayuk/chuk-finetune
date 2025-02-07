@@ -2,9 +2,11 @@
 import logging
 import torch
 
+# imports
 from train.grpo.torch.grpo_utils import gather_logprobs
 from inference.torch.custom_generate_torch import greedy_generate_torch
 
+# logger
 logger = logging.getLogger(__name__)
 
 def generate_single_response_and_oldlogprob(
@@ -12,7 +14,7 @@ def generate_single_response_and_oldlogprob(
     tokenizer,
     prompt: str,
     verbose: bool = False,
-    max_tokens: int = 2000
+    max_new_tokens: int = 2000
 ):
     """
     Generates a single response from 'model' using a manual token-by-token greedy approach
@@ -20,20 +22,6 @@ def generate_single_response_and_oldlogprob(
 
     Then prepends "<think>" to the final text, and computes the old log-prob 
     by re-running the final text through the model and calling gather_logprobs(...).
-
-    Args:
-        model: A Hugging Face (or compatible) Torch model that can return logits 
-               of shape [1, seq_len, vocab_size].
-        tokenizer: The tokenizer for encoding/decoding text.
-        prompt (str): The text prompt to feed in.
-        verbose (bool): If True, logs the final response text.
-        max_tokens (int): The maximum number of tokens to generate 
-                          beyond the initial prompt.
-
-    Returns:
-        (response_text, sum_lp):
-            response_text: The final text, prefixed with "<think>".
-            sum_lp: A float of the summed logprob for that final text.
     """
 
     # 1) Perform token-by-token greedy generation (like MLX)
@@ -41,7 +29,7 @@ def generate_single_response_and_oldlogprob(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_tokens=max_tokens
+        max_new_tokens=max_new_tokens
     ).strip()
 
     # 2) Add "<think>" prefix

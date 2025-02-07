@@ -5,7 +5,7 @@ def greedy_generate_torch(
     model,
     tokenizer,
     prompt: str,
-    max_tokens: int = 2000
+    max_new_tokens: int = 2000
 ):
     """
     Token-by-token greedy decoding in Torch, mimicking MLX's `greedy_generate`.
@@ -27,7 +27,7 @@ def greedy_generate_torch(
         tokens = [eos_id]
 
     # 2) Iteratively generate
-    for _ in range(max_tokens):
+    for _ in range(max_new_tokens):
         # shape [1, seq_len]
         input_ids = torch.tensor([tokens], dtype=torch.long, device=model.device)
 

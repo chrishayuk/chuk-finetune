@@ -9,7 +9,13 @@ from train.grpo.mlx.grpo_loss import gather_logprobs
 # logging
 logger = logging.getLogger(__name__)
 
-def generate_single_response_and_oldlogprob(model, tokenizer, prompt, verbose=False):
+def generate_single_response_and_oldlogprob(
+    model,
+    tokenizer,
+    prompt: str,
+    verbose: bool = False,
+    max_new_tokens: int = 2048
+):
     """
     Generates a single response from 'model' using greedy_generate
     and computes the old log-prob as negative log-likelihood for that response.
@@ -19,7 +25,8 @@ def generate_single_response_and_oldlogprob(model, tokenizer, prompt, verbose=Fa
     response_text = greedy_generate(
         model=model,
         tokenizer=tokenizer,
-        prompt=prompt
+        prompt=prompt,
+        max_new_tokens = max_new_tokens
     ).strip()
 
     # We're going to force thinking
