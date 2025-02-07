@@ -11,5 +11,20 @@ def parse_arguments():
     # device
     parser.add_argument("--device", type=str, default=None, help="Device for training.")
 
+    # optional arguments for adapter paths
+    parser.add_argument(
+        "--load-adapter-path",
+        type=str,
+        default=None,
+        help="Path to adapter weights to load before training."
+    )
+
+    parser.add_argument(
+        "--save-adapter-path",
+        type=str,
+        default=None,
+        help="Path to save adapter weights after training."
+    )
+
     # parse
     return parser.parse_args()
