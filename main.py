@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # main.py
 
-# Standard library
 import os
 
 # Training imports
@@ -45,7 +44,7 @@ def main():
     def integrated_reward(response_text, item):
         return combined_calculate_reward(response_text, item)
     
-    # --- (2) Train the model via GRPO ---
+    # --- (2) Train the model via GRPO, returning a generator of events ---
     gen_stage1 = train_grpo(
         base_model=base_model,
         ref_model=ref_model,
@@ -58,12 +57,17 @@ def main():
         G=2,             # Generate 2 responses per prompt
         device=args.device,
         verbose=True,
-        as_generator=False  # Not returning a generator in this snippet
+        as_generator=True  # <-- IMPORTANT: we want a generator for step-by-step
     )
 
-    # (3) Pass the returned object to your consumer function for logging
-    mean_loss_stage1 = monitor_training_progress(gen_stage1)
-    logger.info(color_text(f"Stage One complete. Mean loss={mean_loss_stage1:.4f}", GREEN))
+    # (3) Pass the returned generator to monitor_training_progress
+    #     Suppose your monitor consumes all events and returns (final_loss, final_reward)
+    mean_loss_stage1, mean_reward_stage1 = monitor_training_progress(gen_stage1)
+
+    logger.info(color_text(
+        f"Stage One complete. Mean loss={mean_loss_stage1:.4f}, Reward={mean_reward_stage1:.4f}",
+        GREEN
+    ))
     logger.info(color_text("===== Training fully complete! =====", BOLD))
 
     # --- (4) Save adapters if user specified a path ---

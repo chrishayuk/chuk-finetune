@@ -1,20 +1,16 @@
-# src/train/grpo/mlx/grpo_trainer.py
 import ast
 import logging
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
 
-# imports
+# Local imports
 from train.grpo.mlx.grpo_generation import generate_single_response_and_oldlogprob
-from train.trainer_base import Trainer
 from train.grpo.mlx.grpo_loss import single_question_loss
+from train.trainer_base import Trainer
 
 # Setup minimal logging format: just the message
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 RESET = "\033[0m"
@@ -28,6 +24,11 @@ def color_text(text, color):
     return f"{color}{text}{RESET}"
 
 def ensure_dict(item):
+    """
+    Attempt to ensure the 'item' is a dict. If it's already a dict, return it.
+    If it's a string that looks like JSON/dict, parse it.
+    Otherwise, raise an error.
+    """
     if isinstance(item, dict):
         return item
     if isinstance(item, str) and item.strip().startswith("{"):
@@ -41,7 +42,15 @@ def ensure_dict(item):
 
 class GRPOTrainer(Trainer):
     """
-    GRPO Trainer for MLX
+    GRPO Trainer for MLX framework.
+
+    Expects:
+      - self.model / self.ref_model: MLX-compatible models
+      - self.optimizer: MLX-compatible optimizer
+      - self.calculate_reward: function(resp_text, item_dict) => (score, feedback_text)
+      - G: number of response samples per item
+      - kl_coeff: KL penalty weight
+      - device: for MLX, might be True/None if no explicit GPU device logic needed
     """
     def __init__(
         self,
@@ -55,25 +64,30 @@ class GRPOTrainer(Trainer):
         device=None,
         verbose=False
     ):
-        # call parent constructor
-        super().__init__(model, tokenizer, optimizer, verbose=verbose)
+        # Call the parent Trainer constructor
+        super().__init__(model, tokenizer, optimizer, device=device, verbose=verbose)
 
-        # set properties
         self.ref_model = ref_model
         self.calculate_reward = calculate_reward
         self.G = G
         self.kl_coeff = kl_coeff
-        self.device = device
 
     def prepare_batch_data(self, batch_questions):
         """
-        Takes a list of items from the data iterator (each likely { "prompt": ... })
-        and returns a structure containing everything needed for `train_step`.
+        Takes a list of items (each typically { "prompt": ... }) and returns
+        a structure containing everything needed for train_step.
+
+        For each item:
+          1) Generate G responses from the model
+          2) Compute reward
+          3) Collect old logprob, etc.
+
+        We'll skip items where reward is None (signifying invalid or no feedback).
         """
         batch_data = []
-        batch_rewards = []
 
         for i, raw_item in enumerate(batch_questions):
+            # Attempt to parse the item into a dict
             item = ensure_dict(raw_item)
             question_str = item["prompt"].strip()
 
@@ -86,7 +100,7 @@ class GRPOTrainer(Trainer):
             skip_this_item = False
 
             for g_idx in range(self.G):
-                # Generate a single response & old logprob
+                # Generate one response & old logprob
                 resp, old_lp = generate_single_response_and_oldlogprob(
                     model=self.model,
                     tokenizer=self.tokenizer,
@@ -110,11 +124,10 @@ class GRPOTrainer(Trainer):
                 logger.info(f"Verifier Feedback: {feedback_text}")
 
             if skip_this_item:
+                # if any response was invalid => skip entire item
                 continue
 
-            avg_reward = float(np.mean(rewards_list))
-            batch_rewards.append(avg_reward)
-
+            # Construct a single data record
             batch_data.append({
                 "item": item,
                 "responses": responses,
@@ -126,18 +139,22 @@ class GRPOTrainer(Trainer):
 
     def train_step(self, batch_data):
         """
-        Given the batch_data from `prepare_batch_data`, run the GRPO update:
-          1) Summation of losses for each item in the batch
-          2) Backprop and optimize
-          3) Return (loss, reward).
+        Perform a GRPO update:
+          - For each item in batch_data, compute a single_question_loss
+          - Accumulate and average loss
+          - Backprop + optimizer update
+          - Return (loss, mean_reward) across the entire batch
         """
-        def batch_closure(m):
+        if not batch_data:
+            return 0.0, 0.0  # Nothing to train on
+
+        def batch_closure(model_instance):
             total_loss = 0.0
             valid_count = 0
 
             for data in batch_data:
                 loss_val = single_question_loss(
-                    model=m,
+                    model=model_instance,
                     ref_model=self.ref_model,
                     tokenizer=self.tokenizer,
                     item=data["item"],
@@ -154,24 +171,38 @@ class GRPOTrainer(Trainer):
                 total_loss /= valid_count
             return total_loss
 
-        if not batch_data:
-            return 0.0, 0.0  # Nothing to train on
-
+        # Compute forward & grad
         loss_value_and_grad = nn.value_and_grad(self.model, batch_closure)
         batch_loss, grads_dict = loss_value_and_grad(self.model)
 
+        # Apply the gradients
         mx.eval(grads_dict)
         self.optimizer.update(self.model, grads_dict)
 
-        # Compute final batch reward for logging
+        # Compute final batch reward
         all_rewards = []
         for d in batch_data:
             all_rewards.extend(d["rewards"])
         final_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 
-        logger.info(color_text(
-            f"\n[GRPO] Single Batch Update => Loss: {batch_loss:.4f}, Mean Reward: {final_reward:.4f}\n",
-            YELLOW
-        ))
-
+        # Return the final batch loss & reward
         return float(batch_loss), final_reward
+
+    # -----------------------------------------------------------------------
+    # Example HOOK Overrides (Optional)
+    # -----------------------------------------------------------------------
+    def on_batch_end(self, epoch, batch_idx, loss, reward):
+        """
+        Called automatically by generic_train after each batch is processed.
+        We'll log a summary here.
+        """
+        if self.verbose:
+            logger.info(color_text(
+                f"[GRPO MLX] E{epoch}B{batch_idx} => Loss: {loss:.4f}, Mean Reward: {reward:.4f}",
+                YELLOW
+            ))
+        # You could also do other side effects here if needed.
+
+    # If you'd like a final message at the end of training:
+    # def on_train_end(self, mean_loss, mean_reward):
+    #     logger.info(f"Training finished with final mean_loss={mean_loss:.4f}, mean_reward={mean_reward:.4f}")

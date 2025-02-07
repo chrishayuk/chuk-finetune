@@ -1,8 +1,7 @@
-# src/train/grpo/torch/grpo_trainer.py
 import torch
 import numpy as np
 
-# imports
+# Local imports
 from train.trainer_base import Trainer
 from train.grpo.torch.grpo_utils import gather_logprobs, gather_kl_divergence
 from train.grpo.torch.grpo_loss import compute_advantages, grpo_loss
@@ -45,6 +44,14 @@ class GRPOTrainer(Trainer):
     """
     A class-based GRPO Trainer for Torch, mirroring the MLX version
     but using PyTorch operators and logic.
+
+    Expects:
+      - self.model / self.ref_model: Torch models
+      - self.optimizer: Torch optimizer
+      - self.calculate_reward: function(resp_text, item_dict) => (score, feedback_text)
+      - G: number of response samples per item
+      - kl_coeff: KL penalty weight
+      - device: "cpu", "cuda", "mps", etc.
     """
     def __init__(
         self,
@@ -58,21 +65,26 @@ class GRPOTrainer(Trainer):
         device=None,
         verbose=False
     ):
-        super().__init__(model, tokenizer, optimizer, verbose=verbose)
+        super().__init__(model, tokenizer, optimizer, device=device, verbose=verbose)
 
         self.ref_model = ref_model
         self.calculate_reward = calculate_reward
         self.G = G
         self.kl_coeff = kl_coeff
-        self.device = device if device is not None else torch.device("cpu")
-        self.verbose = verbose
+
+        if self.device is None:
+            self.device = torch.device("cpu")
+        # Move models to device
+        self.model.to(self.device)
+        self.ref_model.to(self.device)
 
     def prepare_batch_data(self, batch_questions):
         """
         Receives a list of items (each might be a dict or a raw string).
         For each item:
-          - Skip if ensure_dict(...) returns None.
-          - Otherwise, interpret item["prompt"] as the question, generate G responses, compute rewards.
+          - Skip if ensure_dict(...) returns None
+          - Interpret item["prompt"] as the question, generate G responses, compute rewards
+          - Return structured data for train_step
         """
         batch_data = []
 
@@ -93,6 +105,7 @@ class GRPOTrainer(Trainer):
             # 1) Generate G responses
             tokenized = self.tokenizer(prompt, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in tokenized.items()}
+
             outputs = self.model.generate(
                 **inputs,
                 num_return_sequences=self.G,
@@ -102,6 +115,7 @@ class GRPOTrainer(Trainer):
                 top_k=50,
                 temperature=0.7
             )
+
             responses = [
                 self.tokenizer.decode(o.cpu(), skip_special_tokens=True)
                 for o in outputs
@@ -133,7 +147,7 @@ class GRPOTrainer(Trainer):
             if skip_this_item:
                 continue
 
-            # 3) Accumulate in batch_data
+            # 3) Collect data for train_step
             batch_data.append({
                 "item": item,
                 "responses": responses,
@@ -146,9 +160,9 @@ class GRPOTrainer(Trainer):
     def train_step(self, batch_data):
         """
         Aggregates the GRPO loss across items in batch_data:
-          - For each item, re-computes new log-probs & KL vs ref_model
-          - Calculates advantage from item["rewards"]
-          - Averages losses across items, single backward + optimizer step
+          - For each item, re-compute new log-probs & KL vs ref_model
+          - Calculate advantage from item["rewards"]
+          - Average losses across items, single backward + optimizer step
           Returns (loss, mean_reward) as floats.
         """
         if not batch_data:
@@ -161,7 +175,7 @@ class GRPOTrainer(Trainer):
         # Zero-grad once before accumulating
         self.optimizer.zero_grad()
 
-        for i, data_item in enumerate(batch_data):
+        for data_item in batch_data:
             responses = data_item["responses"]
             old_logprobs = data_item["old_logprobs"]
             rewards = data_item["rewards"]
@@ -221,7 +235,16 @@ class GRPOTrainer(Trainer):
         mean_loss = float(total_loss.item())
         mean_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 
-        if self.verbose:
-            print(f"[Torch GRPO] Batch Update => Loss: {mean_loss:.4f}, Reward: {mean_reward:.4f}")
-
+        # Return the final batch-level stats; let the hook handle printing
         return mean_loss, mean_reward
+
+    # ------------------------------------------------
+    # Hook overrides (optional)
+    # ------------------------------------------------
+    def on_batch_end(self, epoch, batch_idx, loss, reward):
+        """
+        Called automatically by generic_train after train_step for each batch.
+        We'll log a summary here if self.verbose is True.
+        """
+        if self.verbose:
+            print(f"[Torch GRPO] E{epoch}B{batch_idx} => Loss: {loss:.4f}, Mean Reward: {reward:.4f}")
