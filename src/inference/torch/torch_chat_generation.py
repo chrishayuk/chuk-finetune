@@ -1,8 +1,13 @@
 # src/inference/torch/torch_chat_generation.py
+
 import logging
 
-# imports
+# We'll reuse the same function for removing special tokens, 
+# just as we do in MLX code:
 from inference.mlx.mlx_chat_generation import remove_special_tokens_from_text
+
+# We'll import the updated custom Torch functions 
+# that accept stop_sequences:
 from inference.torch.custom_generate_torch import (
     greedy_generate_torch,
     top_p_generate_torch
@@ -11,7 +16,6 @@ from inference.torch.custom_generate_torch import (
 # We'll import the same chat template function you use in MLX
 from inference.chat_template import build_chat_prompt
 
-# logging
 logger = logging.getLogger(__name__)
 
 def torch_chat_generation(
@@ -32,12 +36,12 @@ def torch_chat_generation(
 
     1) Build the conversation prompt using 'build_chat_prompt' 
        (which can either use a built-in chat_template or fallback).
-    2) If sampler == 'default', do step-by-step greedy generation.
-       If sampler == 'top_p', do step-by-step top-p generation.
-    3) Return the final text (possibly truncated if a stop sequence is found).
-
-    This matches the "mlx_chat_generation" style, rather than
-    huggingface model.generate streaming logic.
+    2) If sampler == 'default', do token-by-token greedy generation 
+       with stop sequences ANYWHERE.
+       If sampler == 'top_p', do token-by-token top-p generation,
+       also with stop sequences ANYWHERE.
+    3) We remove <|...|> tokens from final text for cleanliness.
+    4) Return the final cleaned text.
 
     :param loaded_model: A preloaded Torch model, already on device
     :param loaded_tokenizer: A Torch-compatible tokenizer (HuggingFace usually)
@@ -48,7 +52,8 @@ def torch_chat_generation(
     :param sampler: 'default' => greedy, 'top_p' => nucleus sampling
     :param temperature: For top-p sampling
     :param top_p: For top-p sampling
-    :param stop_sequences: If any of these strings appear ANYWHERE in partial text, we truncate
+    :param stop_sequences: If any of these strings appear ANYWHERE in partial text, 
+                           we truncate at first occurrence
     :param use_chat_template: If True, attempt to use the built-in chat template
     :return: Final text from the Torch-based model
     """
@@ -63,20 +68,27 @@ def torch_chat_generation(
         use_template=use_chat_template
     )
 
+    # debug
     logger.debug("torch_chat_generation => final prompt:\n%r", final_prompt)
 
     # 2) Sampler logic
     if sampler == "default":
+        # debug
         logger.debug("torch_chat_generation => greedy_generate_torch")
+
+        # greedy sampler
         output_text = greedy_generate_torch(
             model=loaded_model,
             tokenizer=loaded_tokenizer,
             prompt=final_prompt,
             max_new_tokens=max_new_tokens,
-            stop_sequences=stop_sequences  # We'll add 'stop_sequences' support below
+            stop_sequences=stop_sequences
         )
     elif sampler == "top_p":
+        # debug
         logger.debug("torch_chat_generation => top_p_generate_torch")
+
+        # top p sampler
         output_text = top_p_generate_torch(
             model=loaded_model,
             tokenizer=loaded_tokenizer,
@@ -84,12 +96,11 @@ def torch_chat_generation(
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
-            stop_sequences=stop_sequences  # We'll add 'stop_sequences' support
+            stop_sequences=stop_sequences
         )
     else:
         raise ValueError(f"Unsupported sampler: {sampler}")
-    
-    # debug
+
     logger.debug("torch_chat_generation => raw model output:\n%r", output_text)
 
     # 3) Remove <|...|> tokens from final text
