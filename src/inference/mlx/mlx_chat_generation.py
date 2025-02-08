@@ -1,11 +1,10 @@
 # src/inference/mlx/mlx_chat_generation.py
 import logging
-import re
 import mlx.core as mx
 
 # imports
 from inference.mlx.custom_generate_mlx import top_p_generate
-from inference.chat_template import build_chat_prompt
+from inference.chat_template import build_chat_prompt, remove_special_tokens_from_text
 
 # logger
 logger = logging.getLogger(__name__)
@@ -45,12 +44,6 @@ def stream_greedy_generate(
 
     return tokenizer.decode(tokens)
 
-def remove_special_tokens_from_text(text: str, pattern=r"<\|.*?\|>") -> str:
-    """
-    Generic approach to remove <|...|> tokens from final text.
-    """
-    return re.sub(pattern, "", text, flags=re.DOTALL).strip()
-
 def mlx_chat_generation(
     loaded_model,
     loaded_tokenizer,
@@ -62,7 +55,8 @@ def mlx_chat_generation(
     temperature: float = 0.6,
     top_p: float = 0.95,
     stop_sequences=None,
-    use_chat_template: bool = False
+    use_chat_template: bool = False,
+    stream: bool = False
 ):
     """
     1) call build_chat_prompt(tokenizer, system_prompt, user_messages, assistant_messages, add_generation_prompt=True, use_template=use_chat_template)

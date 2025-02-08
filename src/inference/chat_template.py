@@ -1,7 +1,8 @@
 # src/inference/chat_template.py
-import logging
 
-# logging
+import logging
+import re
+
 logger = logging.getLogger(__name__)
 
 def build_chat_prompt(
@@ -13,79 +14,92 @@ def build_chat_prompt(
     use_template: bool = True
 ) -> str:
     """
-    Build a consolidated chat prompt from optional system prompt, 
-    multiple user messages, and assistant messages, 
-    forming a multi-turn conversation.
+    Build a consolidated chat prompt OR a single-turn prompt,
+    depending on 'use_template'.
 
-    - If 'use_template=True' AND 'tokenizer.chat_template' and 'tokenizer.apply_chat_template'
-      exist, we let the tokenizer build the prompt.
-    - Otherwise, we do a fallback approach: 
-         system_prompt\n\n
-         User: user1
-         Assistant: assist1
-         User: user2
-         ...
-         Assistant:
-      for the final user if there's an extra user message.
-
-    :param tokenizer: The tokenizer (potentially with a built-in chat template).
-    :param system_prompt: An optional system instruction for the AI.
-    :param user_messages: A list of user messages (strings).
-    :param assistant_messages: A list of assistant messages (strings).
-    :param add_generation_prompt: Whether to append a final generation marker 
-                                  when using the built-in chat template.
-    :param use_template: If True, we try to call tokenizer.apply_chat_template. 
-                         If it fails or is missing, fallback is used.
-    :return: A single string ready to be tokenized and passed to the model.
+    1) If 'use_template=False', we skip all chat formatting:
+         - Just return system_prompt + the last user message (or all user messages).
+    2) If 'use_template=True' AND the tokenizer has a built-in template
+       (tokenizer.chat_template + tokenizer.apply_chat_template),
+       we use that.
+    3) Otherwise, fallback to a manual "User:\nAssistant:" style.
     """
-    # 1) Build a list of role-based messages
+    user_messages = user_messages or []
+    assistant_messages = assistant_messages or []
+
+    ################################################################
+    # 1) Non-chat (single-turn or plain) if use_template=False
+    ################################################################
+    if not use_template:
+        logger.debug("build_chat_prompt => 'use_template=False': non-chat prompt.")
+        prompt = ""
+
+        # Optional system prompt
+        if system_prompt:
+            prompt += f"{system_prompt.strip()}\n\n"
+
+        # Single-turn (or just plain) approach:
+        # You can choose if you want only the last user message, or all combined.
+        if user_messages:
+            # Example: Just append the last user message
+            prompt += user_messages[-1].strip()
+
+        # If you want a marker or an extra newline at the end:
+        if add_generation_prompt:
+            prompt += "\n"
+
+        return prompt
+
+    ################################################################
+    # 2) Chat mode with possible built-in template
+    ################################################################
+    # Build the role-based list of messages
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
 
-    user_msgs = user_messages or []
-    assistant_msgs = assistant_messages or []
-    max_turns = max(len(user_msgs), len(assistant_msgs))
+    max_turns = max(len(user_messages), len(assistant_messages))
     for i in range(max_turns):
-        if i < len(user_msgs):
-            messages.append({"role": "user", "content": user_msgs[i]})
-        if i < len(assistant_msgs):
-            messages.append({"role": "assistant", "content": assistant_msgs[i]})
+        if i < len(user_messages):
+            messages.append({"role": "user", "content": user_messages[i]})
+        if i < len(assistant_messages):
+            messages.append({"role": "assistant", "content": assistant_messages[i]})
 
-    # 2) If 'use_template' = True, try built-in chat template
-    if use_template and hasattr(tokenizer, "chat_template") and tokenizer.chat_template and hasattr(tokenizer, "apply_chat_template"):
+    # If the tokenizer has a built-in chat template and we want to use it
+    if (
+        hasattr(tokenizer, "chat_template") and tokenizer.chat_template
+        and hasattr(tokenizer, "apply_chat_template")
+    ):
         logger.debug("build_chat_prompt => using tokenizer.apply_chat_template.")
-        text = tokenizer.apply_chat_template(
+        return tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=add_generation_prompt
         )
-        return text
 
-    # 3) Otherwise fallback
+    ################################################################
+    # 3) Fallback: manual "User:\nAssistant:" style
+    ################################################################
     logger.debug("build_chat_prompt => fallback approach (User:\nAssistant:).")
     prompt = ""
-    
-    # system prompt
+
+    # System prompt first
     if system_prompt:
         prompt += f"{system_prompt}\n\n"
 
-    # interleave user & assistant
-    # we already built messages, but let's just do a direct approach:
-    fallback_user_msgs = []
-    fallback_assist_msgs = []
-
-    # Re-split the messages for fallback (since they might contain system as well)
-    user_index = 0
-    assist_index = 0
-
-    # We'll just use user_msgs/assistant_msgs directly
-    for u_msg, a_msg in zip(user_msgs, assistant_msgs):
+    # Interleave user & assistant
+    for u_msg, a_msg in zip(user_messages, assistant_messages):
         prompt += f"User: {u_msg}\nAssistant: {a_msg}\n"
 
-    # If leftover user message:
-    if len(user_msgs) > len(assistant_msgs):
-        prompt += f"User: {user_msgs[-1]}\nAssistant:"
+    # If there's one extra user message at the end
+    if len(user_messages) > len(assistant_messages):
+        prompt += f"User: {user_messages[-1]}\nAssistant:"
 
-    # return the prompt
     return prompt
+
+
+def remove_special_tokens_from_text(text: str, pattern=r"<\|.*?\|>") -> str:
+    """
+    Generic approach to remove <|...|> tokens from final text.
+    """
+    return re.sub(pattern, "", text, flags=re.DOTALL).strip()

@@ -1,52 +1,7 @@
-# src/train/grpo/mlx/custom_generate_mlx.py
-import re
+# src/inference/mlx/custom_generate_mlx.py
+from inference.prompt_removal import remove_prompt_prefix
+from inference.stop_utils import check_stop_sequences, prepare_stop_sequences
 import mlx.core as mx
-
-#################################################
-# 0. Internal Helpers for Anywhere Stop Sequences
-#################################################
-
-def _make_stop_regex(stop_seq: str):
-    """
-    Given a stop sequence like 'User:', return a regex that matches it anywhere 
-    in the text (not just at the end).
-    Example: 'User:' => re.compile(r'User:')
-    """
-    escaped_seq = re.escape(stop_seq)
-    return re.compile(escaped_seq)
-
-def _check_stop_sequences(decoded_text: str, stop_sequences):
-    """
-    Check if 'decoded_text' contains any of the stop-sequence regexes.
-    If found, we truncate the text at the *earliest* match index.
-
-    Return the truncated text if a match is found, otherwise None.
-    """
-    earliest_idx = None
-    for pattern, original_seq in stop_sequences:
-        match = pattern.search(decoded_text)
-        if match:
-            idx = match.start()
-            if earliest_idx is None or idx < earliest_idx:
-                earliest_idx = idx
-
-    if earliest_idx is not None:
-        # return everything up to earliest_idx
-        return decoded_text[:earliest_idx]
-
-    return None
-
-def _prepare_stop_sequences(stop_sequences):
-    """
-    Turn each string in 'stop_sequences' into a compiled regex
-    that matches anywhere in the text.
-    Returns a list of (compiled_regex, original_seq).
-    """
-    result = []
-    for seq in stop_sequences:
-        pattern = _make_stop_regex(seq)
-        result.append((pattern, seq))
-    return result
 
 #################################################
 # 1. Basic Generation Functions
@@ -62,10 +17,11 @@ def greedy_generate(
     """
     Generates text token-by-token using a purely greedy approach,
     stopping if any stop sequence appears anywhere in the decoded text.
+    Then remove the prompt prefix if the final output starts with it.
     """
     if stop_sequences is None:
         stop_sequences = []
-    stop_sequences = _prepare_stop_sequences(stop_sequences)
+    stop_sequences = prepare_stop_sequences(stop_sequences)
 
     tokens = tokenizer.encode(prompt)
     if not tokens:
@@ -83,11 +39,15 @@ def greedy_generate(
 
         # Check stop sequences anywhere
         current_text = tokenizer.decode(tokens)
-        maybe_truncated = _check_stop_sequences(current_text, stop_sequences)
+        maybe_truncated = check_stop_sequences(current_text, stop_sequences)
         if maybe_truncated is not None:
             return maybe_truncated
 
-    return tokenizer.decode(tokens)
+    # If no stop triggered, do final decode
+    raw_output = tokenizer.decode(tokens)
+    # Remove prompt if it is a prefix
+    final_output = remove_prompt_prefix(raw_output, prompt)
+    return final_output
 
 
 def top_k_generate(
@@ -102,10 +62,11 @@ def top_k_generate(
     """
     Generates text token-by-token using top-k sampling,
     stopping if any stop sequence appears in the decoded text.
+    Then remove the prompt prefix if the final output starts with it.
     """
     if stop_sequences is None:
         stop_sequences = []
-    stop_sequences = _prepare_stop_sequences(stop_sequences)
+    stop_sequences = prepare_stop_sequences(stop_sequences)
 
     tokens = tokenizer.encode(prompt)
     if not tokens:
@@ -114,8 +75,6 @@ def top_k_generate(
     for _ in range(max_tokens):
         logits = model(mx.array(tokens, mx.uint32)[None])
         last_logits = logits[:, -1, :]
-
-        # Scale by 1/temperature
         scaled_logits = last_logits * (1.0 / temperature)
 
         # Top-k filtering
@@ -138,11 +97,13 @@ def top_k_generate(
 
         # Check stop sequences
         current_text = tokenizer.decode(tokens)
-        maybe_truncated = _check_stop_sequences(current_text, stop_sequences)
+        maybe_truncated = check_stop_sequences(current_text, stop_sequences)
         if maybe_truncated is not None:
             return maybe_truncated
 
-    return tokenizer.decode(tokens)
+    raw_output = tokenizer.decode(tokens)
+    final_output = remove_prompt_prefix(raw_output, prompt)
+    return final_output
 
 
 def top_p_generate(
@@ -157,10 +118,11 @@ def top_p_generate(
     """
     Generates text token-by-token using top-p (nucleus) sampling,
     stopping if any stop sequence appears in the decoded text.
+    Then remove the prompt prefix if the final output starts with it.
     """
     if stop_sequences is None:
         stop_sequences = []
-    stop_sequences = _prepare_stop_sequences(stop_sequences)
+    stop_sequences = prepare_stop_sequences(stop_sequences)
 
     tokens = tokenizer.encode(prompt)
     if not tokens:
@@ -198,11 +160,13 @@ def top_p_generate(
 
         # Check stop sequences anywhere
         current_text = tokenizer.decode(tokens)
-        maybe_truncated = _check_stop_sequences(current_text, stop_sequences)
+        maybe_truncated = check_stop_sequences(current_text, stop_sequences)
         if maybe_truncated is not None:
             return maybe_truncated
 
-    return tokenizer.decode(tokens)
+    raw_output = tokenizer.decode(tokens)
+    final_output = remove_prompt_prefix(raw_output, prompt)
+    return final_output
 
 #################################################
 # 2. Multi-sample Generation Helper
@@ -234,7 +198,6 @@ def top_p_sample_n(
         samples.append(gen)
     return samples
 
-
 #################################################
 # 3. pass@k (pass@1) and Consensus Evaluation
 #################################################
@@ -245,7 +208,6 @@ def is_correct(generated_text, reference):
     for your domain (exact match, numeric parse, etc.).
     """
     return generated_text.strip() == reference.strip()
-
 
 def evaluate_pass1(
     model,
@@ -277,7 +239,6 @@ def evaluate_pass1(
             correct_count += 1
     return correct_count / k
 
-
 def evaluate_dataset_pass1(
     model,
     tokenizer,
@@ -306,7 +267,6 @@ def evaluate_dataset_pass1(
         )
         scores.append(s)
     return sum(scores) / len(scores)
-
 
 def evaluate_consensus(
     model,
@@ -343,7 +303,6 @@ def evaluate_consensus(
     majority_answer, _ = counter.most_common(1)[0]
 
     return 1.0 if is_correct(majority_answer, reference) else 0.0
-
 
 def evaluate_dataset_consensus(
     model,

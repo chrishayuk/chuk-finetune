@@ -3,12 +3,10 @@
 import sys
 import logging
 
-# imports
 from cli.inference.arg_parser import parse_arguments
 from model.model_loader import load_model_and_tokenizer
 from inference.infer import run_inference
 
-# logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -28,8 +26,8 @@ ANSI_YELLOW = "\033[93m"
 def extract_last_assistant_block(raw_text: str) -> str:
     """
     Finds the last line "assistant" (case-insensitive) 
-    and returns everything after that line. 
-    If not found, returns raw_text.
+    and returns everything after that line exactly as is.
+    If not found, returns raw_text unchanged.
     """
     lines = raw_text.splitlines()
     assistant_start_idx = None
@@ -37,50 +35,60 @@ def extract_last_assistant_block(raw_text: str) -> str:
         if line.strip().lower() == "assistant":
             assistant_start_idx = i
     if assistant_start_idx is not None:
-        return "\n".join(lines[assistant_start_idx+1:]).strip()
-    return raw_text.strip()
+        # Return everything after the 'assistant' line, preserving all spacing/newlines
+        return "\n".join(lines[assistant_start_idx+1:])
+    # If we never saw a line with just 'assistant'
+    return raw_text
+
+def color_print(role_color, role_label, text=""):
+    print(f"{role_color}{role_label}{ANSI_RESET} {text}")
 
 def main():
-    # parse arguments
+    # parse arguments
     args = parse_arguments()
 
-    # get the system prompt and device
+    # set the default system prompt
+    if args.chat and args.system_prompt is None:
+        args.system_prompt = "You are a helpful assistant."
+
+    # set the system prompt
     system_prompt = args.system_prompt
+
+    # set the device
     device = args.device
 
-    # load the model
+    # load the model and the tokenizer
     logger.info("Loading model: %s (device=%s)", args.model_name, device or "auto")
     model, tokenizer, is_mlx = load_model_and_tokenizer(args.model_name, device)
 
-    # clear the user and assistant messages
+    # clear messages
     user_messages = []
     assistant_messages = []
 
-    # If we want to forcibly stop generation on 'User:' or 'Assistant:', define stop seq:
-    stop_seqs = ["User:", "Assistant:"] if args.chat else None
+    # stop on user or assistant
+    stop_seqs = ["<|endoftext|>"]
 
-    # If we're in chat mode, we'll attempt to use the chat template
+    # use the chat template, if chat specified
     use_chat_template = args.chat
 
-    # We define a small helper to color-code our prints
-    def color_print(role_color, role_label, text=""):
-        # e.g. color_print(ANSI_BLUE, "System:", "You are a helpful assistant.")
-        print(f"{role_color}{role_label}{ANSI_RESET} {text}")
+    # we don't support streaming for now
+    stream_mode = False # getattr(args, "stream", False)
 
+    # check if chat mode
     if not args.chat:
         # Single turn
         single_prompt = args.prompt or "Who is Ada Lovelace?"
         user_messages.append(single_prompt)
 
-        # Show system prompt once (in blue)
+        # print the system prompt
         color_print(ANSI_BLUE, "System:", system_prompt)
-        print()  # blank line
+        print()
 
-        # Show user (in green)
+        # print the user prompt
         color_print(ANSI_GREEN, "User:", single_prompt)
 
-        # Inference
-        response = run_inference(
+        # run inference
+        response_or_generator = run_inference(
             model=model,
             tokenizer=tokenizer,
             is_mlx=is_mlx,
@@ -92,42 +100,58 @@ def main():
             temperature=args.temperature,
             top_p=args.top_p,
             stop_sequences=stop_seqs,
-            # use the chat template only if chat is True
-            use_chat_template=use_chat_template
+            use_chat_template=use_chat_template,
+            stream=stream_mode
         )
 
-        # extract final assistant block
-        final_text = extract_last_assistant_block(response)
-
+        # print a line
         print()
-        color_print(ANSI_YELLOW, "Assistant:", final_text)
+
+        # check if we're streaming
+        if hasattr(response_or_generator, "__iter__") and not isinstance(response_or_generator, str):
+            # It's a generator => streaming
+            partial_chunks = []
+            for chunk in response_or_generator:
+                print(chunk, end="", flush=True)
+                partial_chunks.append(chunk)
+            print()  # newline at end
+
+            raw_text = "".join(partial_chunks)
+            final_text = extract_last_assistant_block(raw_text)
+            color_print(ANSI_YELLOW, "Assistant:", final_text)
+        else:
+            # final string
+            final_text = extract_last_assistant_block(response_or_generator)
+            color_print(ANSI_YELLOW, "Assistant:", final_text)
 
     else:
         # Chat mode
         print("Entering chat mode. Type 'exit' or 'quit' to end.\n")
 
-        # Show system prompt once (blue)
+        # print the system prompt
         color_print(ANSI_BLUE, "System:", system_prompt)
         print()
 
+        # chat loop
         while True:
             try:
-                # user input in green
+                # get the user prompt
                 user_input = input(f"{ANSI_GREEN}User:{ANSI_RESET} ")
             except (EOFError, KeyboardInterrupt):
                 print("\nExiting chat mode.")
                 sys.exit(0)
 
-            # check for user quitting
+            # check if the user wants to quit
             if user_input.strip().lower() in ["exit", "quit"]:
-                # quitting
+                # quit
                 print("Exiting chat mode.")
                 break
 
+            # add the user prompt to the context
             user_messages.append(user_input)
 
-            # Inference
-            response = run_inference(
+            # run inferences
+            response_or_generator = run_inference(
                 model=model,
                 tokenizer=tokenizer,
                 is_mlx=is_mlx,
@@ -139,18 +163,35 @@ def main():
                 temperature=args.temperature,
                 top_p=args.top_p,
                 stop_sequences=stop_seqs,
-                use_chat_template=use_chat_template
+                use_chat_template=use_chat_template,
+                stream=stream_mode
             )
 
-            # extract final assistant block
-            final_text = extract_last_assistant_block(response)
+            # check if we're streaming
+            if hasattr(response_or_generator, "__iter__") and not isinstance(response_or_generator, str):
+                # It's a generator => streaming
+                partial_chunks = []
+                for chunk in response_or_generator:
+                    print(chunk, end="", flush=True)
+                    partial_chunks.append(chunk)
+                print()
 
-            # store 
+                raw_text = "".join(partial_chunks)
+                final_text = extract_last_assistant_block(raw_text)
+            else:
+                # final string
+                final_text = extract_last_assistant_block(response_or_generator)
+
+            # add the final text to the assistant message
             assistant_messages.append(final_text)
+
+            # print the assistant message
             color_print(ANSI_YELLOW, "Assistant:", final_text)
             print()
 
+        # chat ended
         print("Chat session ended.")
+
 
 if __name__ == "__main__":
     main()

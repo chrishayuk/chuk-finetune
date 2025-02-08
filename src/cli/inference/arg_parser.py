@@ -13,10 +13,12 @@ def parse_arguments():
         "--chat", action="store_true",
         help="Enable interactive chat mode."
     )
+    # We’ll temporarily make the default = None; 
+    # we’ll handle the 'assistant' default after parsing if --chat is set.
     parser.add_argument(
         "--system_prompt", type=str,
-        default="You are a helpful assistant.",
-        help="A system prompt giving high-level context."
+        default=None,
+        help="A system prompt giving high-level context (only relevant if --chat)."
     )
     parser.add_argument(
         "--model_name", type=str,
@@ -42,7 +44,7 @@ def parse_arguments():
         type=str,
         default="default",
         choices=["default", "top_p"],
-        help="Sampler type: 'default' (chat) or 'top_p' (nucleus sampling)."
+        help="Sampler type: 'default' (greedy) or 'top_p' (nucleus sampling)."
     )
     parser.add_argument(
         "--temperature",
@@ -57,4 +59,14 @@ def parse_arguments():
         help="Top-p (nucleus) sampling cutoff. Default=0.95"
     )
 
+    # # ------------------------------------------------------------------
+    # # Streaming flag
+    # # ------------------------------------------------------------------
+    # parser.add_argument(
+    #     "--stream",
+    #     action="store_true",
+    #     help="If specified, use streaming decode (for Torch or MLX)."
+    # )
+
+    # parse
     return parser.parse_args()
