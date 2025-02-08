@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # main.py
-
 import os
 
 # Training imports

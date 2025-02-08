@@ -74,6 +74,27 @@ def remote_calculate_reward(response_text: str, item: dict) -> float or None:
         else:
             logger.warning("No valid <verifier_answer> content found. Using entire response for 'verifier_answer'.")
 
+    # 4) For the 'verifier_answer' verifier, extract the content within <verifier_answer>...</verifier_answer>
+    if item.get("verifier") == "answer_satisfaction":
+        pattern = r"<answer>\s*(.*?)\s*</answer>"
+        matches = re.findall(pattern, cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+        extracted_text = None
+
+        # Grab the last non-placeholder match
+        for candidate in reversed(matches):
+            candidate_clean = candidate.strip()
+            if candidate_clean.lower() == "answer here":
+                continue
+            if candidate_clean:
+                extracted_text = candidate_clean
+                break
+
+        if extracted_text:
+            logger.debug(f"Extracted <answer> text: {extracted_text}")
+            cleaned_text = f"<answer>{extracted_text}</answer>"
+        else:
+            logger.warning("No valid <answer> content found. Using entire response for 'answer'.")
+
     # 5) Prepare the payload for the remote verifier
     url = item.get("verifier_url", "http://0.0.0.0:8000") + "/verify"
     payload = {
