@@ -2,11 +2,11 @@
 import logging
 import torch
 
-# imports
+# Instead of: from inference.torch.custom_generate_torch import greedy_generate_torch
+# we import the top_p version:
+from inference.torch.custom_generate_torch import top_p_generate_torch
 from train.grpo.torch.grpo_utils import gather_logprobs
-from inference.torch.custom_generate_torch import greedy_generate_torch
 
-# logger
 logger = logging.getLogger(__name__)
 
 def generate_single_response_and_oldlogprob(
@@ -17,19 +17,21 @@ def generate_single_response_and_oldlogprob(
     max_new_tokens: int = 2000
 ):
     """
-    Generates a single response from 'model' using a manual token-by-token greedy approach
-    that closely matches MLX's `greedy_generate(...).`
-
-    Then prepends "<think>" to the final text, and computes the old log-prob 
-    by re-running the final text through the model and calling gather_logprobs(...).
+    Generates a single response from 'model' using top-p sampling
+    (temperature=0.6, top_p=0.95 by default). Then prepends "<think>"
+    to the final text, and computes the old log-prob by re-running
+    that final text through the model and calling gather_logprobs(...).
     """
 
-    # 1) Perform token-by-token greedy generation (like MLX)
-    raw_resp = greedy_generate_torch(
+    # 1) Perform token-by-token top-p generation
+    #    Adjust 'temperature' and 'top_p' to your desired defaults:
+    raw_resp = top_p_generate_torch(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_new_tokens=max_new_tokens
+        max_new_tokens=max_new_tokens,
+        temperature=0.6,
+        top_p=0.95
     ).strip()
 
     # 2) Add "<think>" prefix
@@ -40,8 +42,7 @@ def generate_single_response_and_oldlogprob(
 
     # 3) Re-run for logprob
     tokenized_response = tokenizer(response_text, return_tensors="pt")
-    
-    # fallback if empty
+
     if tokenized_response["input_ids"].numel() == 0:
         logger.warning("[WARN] Empty token sequence; fallback to eos.")
         tokenized_response["input_ids"] = torch.tensor([[tokenizer.eos_token_id]])

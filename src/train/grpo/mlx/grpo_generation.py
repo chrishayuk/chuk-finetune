@@ -1,12 +1,13 @@
 # src/train/grpo/mlx/grpo_generation.py
+
 import logging
 import mlx.core as mx
 
-# imports
-from inference.mlx.custom_generate_mlx import greedy_generate
+# Import the updated module containing top_p_generate, etc.
+# Adjust the import path if your directory structure differs.
+from inference.mlx.custom_generate_mlx import top_p_generate
 from train.grpo.mlx.grpo_loss import gather_logprobs
 
-# logging
 logger = logging.getLogger(__name__)
 
 def generate_single_response_and_oldlogprob(
@@ -17,39 +18,44 @@ def generate_single_response_and_oldlogprob(
     max_new_tokens: int = 2048
 ):
     """
-    Generates a single response from 'model' using greedy_generate
-    and computes the old log-prob as negative log-likelihood for that response.
+    Generates a single response from 'model' using Top-p (nucleus) sampling 
+    and computes the 'old log-prob' as negative log-likelihood for that response.
+    
+    By default, we use:
+      - temperature=0.6
+      - top_p=0.95
+    
+    If you want more or less randomness, adjust these parameters.
     """
 
-    # calls inference
-    response_text = greedy_generate(
+    # --- (1) Generate text using top-p sampling
+    response_text = top_p_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_new_tokens = max_new_tokens
+        max_tokens=max_new_tokens,   # note: custom_generate_mlx uses param 'max_tokens'
+        temperature=0.6,
+        top_p=0.95
     ).strip()
 
-    # We're going to force thinking
+    # Optionally prepend a "thinking" token
     response_text = "<think>" + response_text
 
-    # check if verbose
+    # --- (2) Log if verbose
     if verbose:
-        # log the model response
         logger.info(f"Model: {response_text}")
 
-    # encode the tokenize from the response
+    # --- (3) Tokenize the response
     tokens = tokenizer.encode(response_text)
-
-    # no response from model
     if not tokens:
         logger.warning("[WARN] Empty token sequence; fallback to eos.")
         tokens = [tokenizer.eos_token_id]
 
-    # get the logits
+    # --- (4) Forward pass to get logits
     logits = model(mx.array(tokens, mx.uint32)[None])
 
-    # get the probababilities
+    # --- (5) Gather negative log-likelihood (sum of log-probs)
     sum_lp = float(gather_logprobs(logits, tokens))
 
-    # return the response, and the logit probs
+    # Return the text plus the log-prob
     return response_text, sum_lp
