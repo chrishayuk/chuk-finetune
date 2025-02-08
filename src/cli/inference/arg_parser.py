@@ -20,7 +20,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--model_name", type=str,
-        default="Qwen/Qwen2.5-7B-Instruct",
+        default="Qwen/Qwen2.5-3B-Instruct",
         help="Model name or local path for inference."
     )
     parser.add_argument(
@@ -34,5 +34,27 @@ def parse_arguments():
         help="Device for inference: cpu, cuda, mps, or mlx."
     )
 
-    # parse
+    # ------------------------------------------------------------------
+    # Sampler argument
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--sampler",
+        type=str,
+        default="default",
+        choices=["default", "top_p"],
+        help="Sampler type: 'default' (chat) or 'top_p' (nucleus sampling)."
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.6,
+        help="Sampling temperature (>=0.0). Default=0.6"
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.95,
+        help="Top-p (nucleus) sampling cutoff. Default=0.95"
+    )
+
     return parser.parse_args()

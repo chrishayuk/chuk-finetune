@@ -1,21 +1,72 @@
 # src/train/grpo/mlx/custom_generate_mlx.py
+import re
 import mlx.core as mx
+
+#################################################
+# 0. Internal Helpers for Anywhere Stop Sequences
+#################################################
+
+def _make_stop_regex(stop_seq: str):
+    """
+    Given a stop sequence like 'User:', return a regex that matches it anywhere 
+    in the text (not just at the end).
+    Example: 'User:' => re.compile(r'User:')
+    """
+    escaped_seq = re.escape(stop_seq)
+    return re.compile(escaped_seq)
+
+def _check_stop_sequences(decoded_text: str, stop_sequences):
+    """
+    Check if 'decoded_text' contains any of the stop-sequence regexes.
+    If found, we truncate the text at the *earliest* match index.
+
+    Return the truncated text if a match is found, otherwise None.
+    """
+    earliest_idx = None
+    for pattern, original_seq in stop_sequences:
+        match = pattern.search(decoded_text)
+        if match:
+            idx = match.start()
+            if earliest_idx is None or idx < earliest_idx:
+                earliest_idx = idx
+
+    if earliest_idx is not None:
+        # return everything up to earliest_idx
+        return decoded_text[:earliest_idx]
+
+    return None
+
+def _prepare_stop_sequences(stop_sequences):
+    """
+    Turn each string in 'stop_sequences' into a compiled regex
+    that matches anywhere in the text.
+    Returns a list of (compiled_regex, original_seq).
+    """
+    result = []
+    for seq in stop_sequences:
+        pattern = _make_stop_regex(seq)
+        result.append((pattern, seq))
+    return result
 
 #################################################
 # 1. Basic Generation Functions
 #################################################
 
-def greedy_generate(model, tokenizer, prompt, max_new_tokens=2000):
+def greedy_generate(
+    model,
+    tokenizer,
+    prompt,
+    max_new_tokens=2000,
+    stop_sequences=None
+):
     """
-    Generates text token-by-token using a purely greedy approach 
-    (i.e., always picking argmax of the logits).
+    Generates text token-by-token using a purely greedy approach,
+    stopping if any stop sequence appears anywhere in the decoded text.
+    """
+    if stop_sequences is None:
+        stop_sequences = []
+    stop_sequences = _prepare_stop_sequences(stop_sequences)
 
-    :param model: The MLX model capable of returning logits of shape [1, seq_len, vocab_size]
-    :param tokenizer: The tokenizer to encode/decode the text
-    :param prompt: The text prompt to start generation from
-    :param max_new_tokens: The maximum number of additional tokens to generate
-    :return: The decoded string of tokens (prompt + generated content)
-    """
     tokens = tokenizer.encode(prompt)
     if not tokens:
         tokens = [tokenizer.eos_token_id]
@@ -24,18 +75,38 @@ def greedy_generate(model, tokenizer, prompt, max_new_tokens=2000):
         logits = model(mx.array(tokens, mx.uint32)[None])
         last_logits = logits[:, -1, :]
         next_token = mx.argmax(last_logits, axis=-1).item()
-
         tokens.append(next_token)
+
+        # Check EOS
         if next_token == tokenizer.eos_token_id:
             break
+
+        # Check stop sequences anywhere
+        current_text = tokenizer.decode(tokens)
+        maybe_truncated = _check_stop_sequences(current_text, stop_sequences)
+        if maybe_truncated is not None:
+            return maybe_truncated
 
     return tokenizer.decode(tokens)
 
 
-def top_k_generate(model, tokenizer, prompt, max_tokens=200, top_k=5, temperature=1.0):
+def top_k_generate(
+    model,
+    tokenizer,
+    prompt,
+    max_tokens=200,
+    top_k=5,
+    temperature=1.0,
+    stop_sequences=None
+):
     """
-    Generates text token-by-token using top-k sampling.
+    Generates text token-by-token using top-k sampling,
+    stopping if any stop sequence appears in the decoded text.
     """
+    if stop_sequences is None:
+        stop_sequences = []
+    stop_sequences = _prepare_stop_sequences(stop_sequences)
+
     tokens = tokenizer.encode(prompt)
     if not tokens:
         tokens = [tokenizer.eos_token_id]
@@ -44,35 +115,53 @@ def top_k_generate(model, tokenizer, prompt, max_tokens=200, top_k=5, temperatur
         logits = model(mx.array(tokens, mx.uint32)[None])
         last_logits = logits[:, -1, :]
 
-        # Scale by 1/temperature if desired
+        # Scale by 1/temperature
         scaled_logits = last_logits * (1.0 / temperature)
 
-        # Find the top-k token indices
-        kth_val = mx.topk(
-            scaled_logits, k=top_k, axis=-1, largest=True, sorted=False
-        )["values"][:, -1]
+        # Top-k filtering
+        kth_val = mx.topk(scaled_logits, k=top_k, axis=-1,
+                          largest=True, sorted=False)["values"][:, -1]
         mask = scaled_logits < kth_val
         scaled_logits = mx.where(
-            mask, 
-            mx.array(-float('inf'), scaled_logits.dtype), 
+            mask,
+            mx.array(-float('inf'), scaled_logits.dtype),
             scaled_logits
         )
 
-        # Sample from top-k
+        # Sample
         next_token = mx.random.categorical(scaled_logits, axis=-1).item()
         tokens.append(next_token)
 
+        # Check EOS
         if next_token == tokenizer.eos_token_id:
             break
+
+        # Check stop sequences
+        current_text = tokenizer.decode(tokens)
+        maybe_truncated = _check_stop_sequences(current_text, stop_sequences)
+        if maybe_truncated is not None:
+            return maybe_truncated
 
     return tokenizer.decode(tokens)
 
 
-def top_p_generate(model, tokenizer, prompt, max_tokens=200, top_p=0.9, temperature=1.0):
+def top_p_generate(
+    model,
+    tokenizer,
+    prompt,
+    max_tokens=200,
+    top_p=0.9,
+    temperature=1.0,
+    stop_sequences=None
+):
     """
-    Generates text token-by-token using top-p (nucleus) sampling.
-    Fixes the shape mismatch in mx.take_along_axis by reshaping the chosen index.
+    Generates text token-by-token using top-p (nucleus) sampling,
+    stopping if any stop sequence appears in the decoded text.
     """
+    if stop_sequences is None:
+        stop_sequences = []
+    stop_sequences = _prepare_stop_sequences(stop_sequences)
+
     tokens = tokenizer.encode(prompt)
     if not tokens:
         tokens = [tokenizer.eos_token_id]
@@ -86,49 +175,50 @@ def top_p_generate(model, tokenizer, prompt, max_tokens=200, top_p=0.9, temperat
         probs = mx.softmax(scaled_logits, axis=-1)
 
         # Sort tokens by ascending probability
-        sorted_indices = mx.argsort(probs, axis=-1)         # Shape: [1, vocab_size]
+        sorted_indices = mx.argsort(probs, axis=-1)
         sorted_probs = mx.take_along_axis(probs, sorted_indices, axis=-1)
 
-        # Cumulative sum of sorted probabilities
+        # Cumulative sum
         cumulative_probs = mx.cumsum(sorted_probs, axis=-1)
 
-        # Truncate where sum of probabilities >= (1 - top_p)
+        # Nucleus cutoff
         threshold_mask = cumulative_probs > (1.0 - top_p)
-        
-        # Zero out everything below threshold
         safe_probs = mx.where(threshold_mask, sorted_probs, mx.array(0.0, probs.dtype))
 
-        # Sample from truncated distribution
+        # Sample within nucleus
         chosen_index = mx.random.categorical(mx.log(safe_probs + 1e-12), axis=-1).item()
-
-        # chosen_index is an int in Python, so we reshape it to [1,1]
         chosen_index_arr = mx.array(chosen_index, mx.uint32).reshape((1, 1))
-
-        # Use take_along_axis properly
         next_token = mx.take_along_axis(sorted_indices, chosen_index_arr, axis=-1).item()
 
         tokens.append(next_token)
+
+        # Check EOS
         if next_token == tokenizer.eos_token_id:
             break
 
-    return tokenizer.decode(tokens)
+        # Check stop sequences anywhere
+        current_text = tokenizer.decode(tokens)
+        maybe_truncated = _check_stop_sequences(current_text, stop_sequences)
+        if maybe_truncated is not None:
+            return maybe_truncated
 
+    return tokenizer.decode(tokens)
 
 #################################################
 # 2. Multi-sample Generation Helper
 #################################################
 
 def top_p_sample_n(
-    model, 
-    tokenizer, 
-    prompt, 
-    n=4, 
-    max_tokens=2000, 
-    temperature=0.6, 
+    model,
+    tokenizer,
+    prompt,
+    n=4,
+    max_tokens=2000,
+    temperature=0.6,
     top_p=0.95
 ):
     """
-    Generates 'n' independent samples using top-p sampling 
+    Generates 'n' independent samples using top-p sampling
     with default temp=0.6 and top_p=0.95.
     """
     samples = []
@@ -151,20 +241,20 @@ def top_p_sample_n(
 
 def is_correct(generated_text, reference):
     """
-    Basic correctness check. Replace with logic suitable 
+    Basic correctness check. Replace with logic suitable
     for your domain (exact match, numeric parse, etc.).
     """
     return generated_text.strip() == reference.strip()
 
 
 def evaluate_pass1(
-    model, 
-    tokenizer, 
-    prompt, 
-    reference, 
-    k=4, 
-    max_tokens=2000, 
-    temperature=0.6, 
+    model,
+    tokenizer,
+    prompt,
+    reference,
+    k=4,
+    max_tokens=2000,
+    temperature=0.6,
     top_p=0.95
 ):
     """
@@ -189,13 +279,13 @@ def evaluate_pass1(
 
 
 def evaluate_dataset_pass1(
-    model, 
-    tokenizer, 
-    questions, 
+    model,
+    tokenizer,
+    questions,
     references,
-    k=4, 
-    max_tokens=2000, 
-    temperature=0.6, 
+    k=4,
+    max_tokens=2000,
+    temperature=0.6,
     top_p=0.95
 ):
     """
@@ -219,17 +309,17 @@ def evaluate_dataset_pass1(
 
 
 def evaluate_consensus(
-    model, 
-    tokenizer, 
-    prompt, 
+    model,
+    tokenizer,
+    prompt,
     reference,
-    n_samples=64, 
-    max_tokens=2000, 
-    temperature=0.6, 
+    n_samples=64,
+    max_tokens=2000,
+    temperature=0.6,
     top_p=0.95
 ):
     """
-    Majority-vote consensus for a single prompt. 
+    Majority-vote consensus for a single prompt.
     - Generate 'n_samples' responses
     - Convert each to a discrete answer
     - Take majority vote
@@ -256,18 +346,18 @@ def evaluate_consensus(
 
 
 def evaluate_dataset_consensus(
-    model, 
-    tokenizer, 
-    questions, 
+    model,
+    tokenizer,
+    questions,
     references,
-    n_samples=64, 
-    max_tokens=2000, 
-    temperature=0.6, 
+    n_samples=64,
+    max_tokens=2000,
+    temperature=0.6,
     top_p=0.95
 ):
     """
-    Evaluate consensus@64 (or other n_samples) across a dataset.
-    Returns the fraction of questions for which the majority vote is correct.
+    Evaluate consensus@64 across a dataset of Q&A pairs.
+    Returns fraction correct by majority vote.
     """
     correct_count = 0
     for q, r in zip(questions, references):
