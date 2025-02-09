@@ -9,7 +9,7 @@ from dataset.prompt_handler import prepare_prompts
 # train
 from train.grpo.grpo_model_loader import load_models
 from train.grpo.grpo_trainer import train_grpo
-from reward_functions import combined_calculate_reward
+from verifiers.combined_reward import combined_calculate_reward
 
 # adapters
 from model.adapters import save_adapters, load_adapters
