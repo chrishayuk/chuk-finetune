@@ -25,13 +25,13 @@ Please note that top-p sampling (of 95% percentile) with temperature of 0.7
 I've limited the tokens to 256
 
 ```bash
-uv run inference-cli --sampler top_p --temperature 0.7 --top_p 0.95 --model_name "Qwen/Qwen2.5-3B" --max_new_tokens 256 --device mlx --prompt "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think>
+uv run inference-cli --sampler top_p --temperature 0.6 --top_p 0.95 --model_name "Qwen/Qwen2.5-3B" --max_new_tokens 256 --device mlx --prompt "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think>
 <answer> answer here </answer>. User: What's 10 + 10? Assistant: <think>"
 ```
 
 This version is slightly simpler, but does just a good of a job with qwen
 
 ```bash
-uv run inference-cli --sampler top_p --temperature 0.7 --top_p 0.95 --model_name "Qwen/Qwen2.5-3B" --max_new_tokens 256 --device mlx --system_prompt "You are a helpful assistant. Always use <think> for reasoning </think> and <answer> for final answer.</answer>" --prompt "What's 10 + 10? Assistant: <think>"
+uv run inference-cli --sampler top_p --temperature 0.6 --top_p 0.95 --model_name "Qwen/Qwen2.5-3B" --max_new_tokens 256 --device mlx --system_prompt "You are a helpful assistant. Always use <think> for reasoning </think> and <answer> for final answer.</answer>" --prompt "What's 10 + 10? Assistant: <think>"
 ```
 
