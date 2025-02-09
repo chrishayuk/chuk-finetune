@@ -2,10 +2,6 @@
 import logging
 from typing import List, Optional, Union
 
-# Imports
-from inference.torch.torch_chat_generation import torch_chat_generation
-from inference.mlx.mlx_chat_generation import mlx_chat_generation
-
 # logger
 logger = logging.getLogger(__name__)
 
@@ -110,6 +106,9 @@ def _run_single_inference(
     returning a single final string. This code was previously in run_inference.
     """
     if is_mlx:
+        # mlx
+        from inference.mlx.mlx_chat_generation import mlx_chat_generation
+
         # MLX chat generation
         return mlx_chat_generation(
             loaded_model=model,
@@ -126,6 +125,9 @@ def _run_single_inference(
             stream=stream
         )
     else:
+        # torch
+        from inference.torch.torch_chat_generation import torch_chat_generation
+
         # Torch chat generation
         return torch_chat_generation(
             loaded_model=model,
