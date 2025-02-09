@@ -1,7 +1,5 @@
 # Inference
-
-
-
+The following gives a brief explanation on how to use inference 
 
 ## Chat
 If you wish to chat with a model through the interactive chat, you can run the following comman
@@ -10,35 +8,13 @@ If you wish to chat with a model through the interactive chat, you can run the f
 uv run inference-cli --chat --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device cpu
 ```
 
-### CPU
-If you wish to use cpu for inference, you can use the following command
+### Sampling
+If you wish to test out prompts for sampling, see the inference.md file for more details
+However the following command shows you how to generate multiple samples
 
 ```bash
-uv run inference-cli --chat --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device cpu
-```
-
-### MPS
-If you are using an apple silicon machine, you can also use MPS
-
-```bash
-uv run inference-cli --chat--model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device mps
-```
-
-### MLX
-MLX is substatially faster than MPS for inference, so it's probably wise to use MLX
-
-```bash
-uv run inference-cli --chat --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device mps
-```
-
-## Changing models
-You can use any model within huggingface to power chat
-
-### mistral small
-The new mistral small models are fully supported
-
-```bash
-uv run inference-cli --chat --model_name "Qwen/Qwen2.5-3B-instruct" --max_new_tokens 256 --device mlx
+uv run inference-cli --sampler top_p --temperature 0.6 --top_p 0.95 --model_name "Qwen/Qwen2.5-3B" --max_new_tokens 256 --device mlx --prompt "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think>
+<answer> answer here </answer>. User: What's 10 + 10? Assistant: <think>" --num_responses 4
 ```
 
 ## Training

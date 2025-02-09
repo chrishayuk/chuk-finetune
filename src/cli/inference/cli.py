@@ -47,6 +47,12 @@ def main():
     # parse arguments
     args = parse_arguments()
 
+    # Convert the comma-separated string to a list, or empty if none
+    if args.stop_sequences.strip():
+        stop_seqs = [s.strip() for s in args.stop_sequences.split(",")]
+    else:
+        stop_seqs = []
+
     # set the default system prompt
     if args.chat and args.system_prompt is None:
         args.system_prompt = "You are a helpful assistant."
@@ -65,9 +71,6 @@ def main():
     user_messages = []
     assistant_messages = []
 
-    # stop on user or assistant
-    stop_seqs = ["<|endoftext|>"]
-
     # use the chat template, if chat specified
     use_chat_template = args.chat
 
@@ -80,14 +83,11 @@ def main():
         single_prompt = args.prompt or "Who is Ada Lovelace?"
         user_messages.append(single_prompt)
 
-        # print the system prompt
         color_print(ANSI_BLUE, "System:", system_prompt)
         print()
-
-        # print the user prompt
         color_print(ANSI_GREEN, "User:", single_prompt)
 
-        # run inference
+        # run inference
         response_or_generator = run_inference(
             model=model,
             tokenizer=tokenizer,
@@ -101,28 +101,38 @@ def main():
             top_p=args.top_p,
             stop_sequences=stop_seqs,
             use_chat_template=use_chat_template,
-            stream=stream_mode
+            stream=stream_mode,
+            num_responses=args.num_responses
         )
 
-        # print a line
-        print()
+        print()  # blank line
 
-        # check if we're streaming
-        if hasattr(response_or_generator, "__iter__") and not isinstance(response_or_generator, str):
-            # It's a generator => streaming
-            partial_chunks = []
-            for chunk in response_or_generator:
-                print(chunk, end="", flush=True)
-                partial_chunks.append(chunk)
-            print()  # newline at end
-
-            raw_text = "".join(partial_chunks)
-            final_text = extract_last_assistant_block(raw_text)
-            color_print(ANSI_YELLOW, "Assistant:", final_text)
+        # If run_inference returned multiple responses (a list):
+        if isinstance(response_or_generator, list):
+            # Print each response with "Assistant (Sample X/Y)"
+            for i, resp_text in enumerate(response_or_generator, start=1):
+                final_text = extract_last_assistant_block(resp_text)
+                color_print(ANSI_YELLOW,
+                    f"Assistant (Sample {i}/{len(response_or_generator)}):",
+                    final_text
+                )
+                print()  # extra blank line
         else:
-            # final string
-            final_text = extract_last_assistant_block(response_or_generator)
-            color_print(ANSI_YELLOW, "Assistant:", final_text)
+            # Single response path
+            if hasattr(response_or_generator, "__iter__") and not isinstance(response_or_generator, str):
+                # streaming generator
+                partial_chunks = []
+                for chunk in response_or_generator:
+                    print(chunk, end="", flush=True)
+                    partial_chunks.append(chunk)
+                print()
+                raw_text = "".join(partial_chunks)
+                final_text = extract_last_assistant_block(raw_text)
+                color_print(ANSI_YELLOW, "Assistant:", final_text)
+            else:
+                # final single string
+                final_text = extract_last_assistant_block(response_or_generator)
+                color_print(ANSI_YELLOW, "Assistant:", final_text)
 
     else:
         # Chat mode

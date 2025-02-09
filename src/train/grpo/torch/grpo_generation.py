@@ -2,11 +2,11 @@
 import logging
 import torch
 
-# Instead of: from inference.torch.custom_generate_torch import greedy_generate_torch
-# we import the top_p version:
+# imports
 from inference.torch.custom_generate_torch import top_p_generate_torch
 from train.grpo.torch.grpo_utils import gather_logprobs
 
+# logger
 logger = logging.getLogger(__name__)
 
 def generate_single_response_and_oldlogprob(
@@ -23,8 +23,7 @@ def generate_single_response_and_oldlogprob(
     that final text through the model and calling gather_logprobs(...).
     """
 
-    # 1) Perform token-by-token top-p generation
-    #    Adjust 'temperature' and 'top_p' to your desired defaults:
+    # 1) Perform token-by-token top-p generation, matching deepseek
     raw_resp = top_p_generate_torch(
         model=model,
         tokenizer=tokenizer,

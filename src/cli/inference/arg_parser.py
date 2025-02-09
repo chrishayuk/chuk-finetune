@@ -1,4 +1,5 @@
 # src/cli/inference/arg_parser.py
+
 import argparse
 
 def parse_arguments():
@@ -13,8 +14,6 @@ def parse_arguments():
         "--chat", action="store_true",
         help="Enable interactive chat mode."
     )
-    # We’ll temporarily make the default = None; 
-    # we’ll handle the 'assistant' default after parsing if --chat is set.
     parser.add_argument(
         "--system_prompt", type=str,
         default=None,
@@ -36,9 +35,7 @@ def parse_arguments():
         help="Device for inference: cpu, cuda, mps, or mlx."
     )
 
-    # ------------------------------------------------------------------
     # Sampler argument
-    # ------------------------------------------------------------------
     parser.add_argument(
         "--sampler",
         type=str,
@@ -59,14 +56,23 @@ def parse_arguments():
         help="Top-p (nucleus) sampling cutoff. Default=0.95"
     )
 
-    # # ------------------------------------------------------------------
-    # # Streaming flag
-    # # ------------------------------------------------------------------
-    # parser.add_argument(
-    #     "--stream",
-    #     action="store_true",
-    #     help="If specified, use streaming decode (for Torch or MLX)."
-    # )
+    # stop_sequences argument
+    parser.add_argument(
+        "--stop_sequences",
+        type=str,
+        default="<|endoftext|>",
+        help="Comma-separated list of stop sequences to use. "
+             'Example: --stop_sequences "</answer>,User:,Assistant:"'
+    )
 
-    # parse
+    # number of responses
+    parser.add_argument(
+        "--num_responses",
+        type=int,
+        default=1,
+        help="Number of responses to generate in single-turn mode. "
+             "If >1 and sampler=top_p, we do multiple top-p samples."
+    )
+
+    # parse and return
     return parser.parse_args()

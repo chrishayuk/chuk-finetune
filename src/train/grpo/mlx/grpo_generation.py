@@ -3,11 +3,11 @@
 import logging
 import mlx.core as mx
 
-# Import the updated module containing top_p_generate, etc.
-# Adjust the import path if your directory structure differs.
+# imports
 from inference.mlx.custom_generate_mlx import top_p_generate
 from train.grpo.mlx.grpo_loss import gather_logprobs
 
+# logger
 logger = logging.getLogger(__name__)
 
 def generate_single_response_and_oldlogprob(
@@ -28,12 +28,12 @@ def generate_single_response_and_oldlogprob(
     If you want more or less randomness, adjust these parameters.
     """
 
-    # --- (1) Generate text using top-p sampling
+    # 1) Perform token-by-token top-p generation, matching deepseek
     response_text = top_p_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_tokens=max_new_tokens,   # note: custom_generate_mlx uses param 'max_tokens'
+        max_tokens=max_new_tokens,
         temperature=0.6,
         top_p=0.95
     ).strip()
