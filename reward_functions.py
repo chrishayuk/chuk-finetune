@@ -2,7 +2,6 @@ import re
 import requests
 import difflib
 from cli.train.logger_config import logger
-from mlx_lm import generate  # Your model generation function
 
 # ANSI colour for evaluator responses
 EVAL_COLOR = "\033[95m"
@@ -132,6 +131,8 @@ def remote_calculate_reward(response_text: str, item: dict) -> float or None:
 
 
 def self_calculate_reward(response_text: str, item: dict) -> tuple:
+    from mlx_lm import generate 
+    
     """
     Uses an evaluator model to produce a reward score by comparing the generated response
     with the expected completion (when 'completion' is present).
