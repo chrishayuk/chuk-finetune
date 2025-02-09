@@ -150,8 +150,7 @@ class GRPOTrainer(Trainer):
         return float(batch_loss), final_reward
 
     def on_batch_end(self, epoch, batch_idx, loss, reward):
-        if self.verbose:
-            logger.info(color_text(
-                f"[GRPO MLX] E{epoch}B{batch_idx} => Loss: {loss:.4f}, Mean Reward: {reward:.4f}",
-                YELLOW
-            ))
+        logger.info(color_text(
+            f"[GRPO MLX] E{epoch}B{batch_idx} => Loss: {loss:.4f}, Mean Reward: {reward:.4f}",
+            YELLOW
+        ))

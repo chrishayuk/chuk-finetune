@@ -14,11 +14,12 @@ def top_p_generate(
     stop_sequences=None
 ):
     """
-    Token-by-token top-p (nucleus) sampling (ASCENDING order) in MLX.
+    Token-by-token top-p (nucleus) sampling in MLX (ASCENDING order).
 
-    We fix potential zero-distribution issues by forcing the last token 
-    (highest probability in ascending order) to be kept if cumsum never 
-    exceeds (1 - top_p).
+    Safeguards against NaNs/Inf or zero distributions by:
+      1) Clamping logits before softmax
+      2) Forcing at least one token to remain if threshold_mask is all false
+      3) If sum of truncated distribution < 1e-12, fallback to the last token
     """
     if stop_sequences is None:
         stop_sequences = []
@@ -29,14 +30,17 @@ def top_p_generate(
         tokens = [tokenizer.eos_token_id]
 
     for _ in range(max_tokens):
-        # 1) Forward pass -> pass entire token list (no KV-cache)
-        logits = model(mx.array(tokens, mx.uint32)[None])
+        # 1) Forward pass (no KV-cache); pass entire token list
+        logits = model(mx.array(tokens, mx.uint32)[None])  # shape [1, seq_len, vocab_size]
 
-        # 2) Logits for the last token in the sequence
-        last_logits = logits[:, -1, :]
+        # 2) Take logits for the last token
+        last_logits = logits[:, -1, :]  # shape [1, vocab_size]
 
         # 3) Apply temperature
         scaled_logits = last_logits / temperature
+
+        # --- NEW: clamp logits to avoid overflow in softmax ---
+        scaled_logits = mx.clip(scaled_logits, mx.array(-100.0), mx.array(100.0))
 
         # 4) Convert logits -> probabilities
         probs = mx.softmax(scaled_logits, axis=-1)  # shape [1, vocab_size]
@@ -48,34 +52,40 @@ def top_p_generate(
         # 6) Cumulative sum in ascending order
         cumulative_probs = mx.cumsum(sorted_probs, axis=-1)
 
-        # 7) In ascending order, the top-p portion is the tail where 
-        #    cumsum > (1.0 - top_p). We want to keep that tail.
+        # 7) The top-p tail is where cumsum > (1.0 - top_p).
         threshold_mask = cumulative_probs > (1.0 - top_p)
 
-        # 8) If threshold_mask is all False, it means we never exceeded (1 - top_p).
-        #    In that edge case, we force ourselves to keep the last token 
-        #    (the highest probability in ascending order).
-        if (threshold_mask.sum(axis=-1).item() == 0):
+        # 8) If threshold_mask is all False, 
+        #    forcibly keep the last token (highest prob in ascending order).
+        sum_mask = threshold_mask.sum(axis=-1)
+        if float(sum_mask.asnumpy()[0]) == 0:
             # Force last token to be included
             threshold_mask[..., -1] = True
 
-        # 9) Zero out everything *before* we exceed that threshold
+        # 9) Zero out everything *before* that threshold
         truncated_probs = mx.where(threshold_mask, sorted_probs, mx.array(0.0, probs.dtype))
 
-        # 10) Re-normalize to sum to 1
-        sum_trunc = truncated_probs.sum(axis=-1, keepdims=True) + 1e-12
-        truncated_probs = truncated_probs / sum_trunc
+        # 10) Re-normalize
+        sum_trunc = truncated_probs.sum(axis=-1, keepdims=True)
+        # Convert to Python float for comparison
+        sum_value = float(sum_trunc.asnumpy()[0, 0])
+        if sum_value < 1e-12:
+            # Fallback: pick the last token in ascending order
+            # (the highest-prob token). We skip sampling.
+            chosen_index = truncated_probs.shape[-1] - 1
+        else:
+            truncated_probs = truncated_probs / (sum_trunc + 1e-12)
 
-        # 11) Sample from truncated & re-normalized distribution
-        chosen_index = mx.random.categorical(mx.log(truncated_probs + 1e-12), axis=-1).item()
+            # 11) Sample from truncated & re-normalized distribution
+            chosen_index = mx.random.categorical(mx.log(truncated_probs + 1e-12), axis=-1).item()
 
-        # 12) Map sampled index back to actual token ID
+        # 12) Map the chosen index back to the actual token ID
         chosen_index_arr = mx.array(chosen_index, mx.uint32).reshape((1, 1))
         next_token = mx.take_along_axis(sorted_indices, chosen_index_arr, axis=-1).item()
 
         tokens.append(next_token)
 
-        # 13) Early stopping: check EOS
+        # 13) Check EOS
         if next_token == tokenizer.eos_token_id:
             break
 
@@ -87,4 +97,5 @@ def top_p_generate(
 
     # 15) Final decode + remove prompt prefix
     raw_output = tokenizer.decode(tokens)
-    return remove_prompt_prefix(raw_output, prompt)
+    final_output = remove_prompt_prefix(raw_output, prompt)
+    return final_output

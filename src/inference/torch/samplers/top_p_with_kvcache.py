@@ -18,106 +18,108 @@ def top_p_generate_torch_with_kvcache(
     device=None,
 ):
     """
-    Token-by-token top-p (nucleus) sampling in Torch, using a KV-cache 
-    (past_key_values) to avoid re-running the entire sequence each time.
-
-    We fix the 'nan/inf' error by always keeping at least the highest-probability token.
-    Steps:
-      1) Encode the entire prompt and feed it once to fill `past_key_values`.
-      2) For each new token, feed only that token + `past_key_values`
-         (the model will skip re-processing old tokens).
-      3) For top-p filtering in descending order, we 'shift' the cutoff mask so 
-         the top token is never masked, thus avoiding an all-zero distribution.
+    A robust top-p (nucleus) sampler in Torch with KV-cache, preventing NaN/Inf
+    probabilities. We do:
+      1) Clip logits to avoid overflow in softmax
+      2) Shift the cutoff mask so the top token isn't zeroed out
+      3) Clamp negative or NaN values to [0,1]
+      4) Fallback to the top token if sum ~ 0
     """
-    # Prepare stop sequences
+    # 1) Prepare stop sequences
     if stop_sequences is None:
         stop_sequences = []
     stop_seqs = prepare_stop_sequences(stop_sequences)
 
-    # Encode prompt
+    # 2) Encode the prompt
     tokens = tokenizer.encode(prompt)
     if not tokens:
-        tokens = [tokenizer.eos_token_id] if tokenizer.eos_token_id is not None else []
-        if not tokens:
+        # If empty, fallback to an eos token
+        if tokenizer.eos_token_id is not None:
+            tokens = [tokenizer.eos_token_id]
+        else:
             raise ValueError("No tokens found and no eos_token_id in tokenizer.")
 
-    # Decide on device
+    # 3) Decide on device
     if device is None:
         if hasattr(model, "device"):
             device = model.device
         else:
             device = torch.device("cpu")
 
-    # Convert prompt -> tensor on device
+    # 4) Convert prompt to device
     input_ids = torch.tensor([tokens], dtype=torch.long, device=device)
 
-    # 1) First forward pass: feed entire prompt
-    #    We expect outputs = model(..., use_cache=True) => .logits, .past_key_values
     with torch.no_grad():
+        # We expect outputs.logits and outputs.past_key_values
         outputs = model(input_ids, use_cache=True)
-        logits = outputs.logits  # shape [1, seq_len, vocab_size]
-        past_key_values = outputs.past_key_values  # The KV cache
+        logits = outputs.logits
+        past_key_values = outputs.past_key_values
 
-    # We'll generate up to max_new_tokens
-    generated_tokens = tokens[:]  # copy the prompt IDs
+    # We'll store all tokens in generated_tokens
+    generated_tokens = tokens[:]
 
-    # 2) Iterative decoding
     for _ in range(max_new_tokens):
-        # a) Take logits for the last token
+        # a) Get logits for the last token
         last_logits = logits[:, -1, :]  # shape [1, vocab_size]
 
         # b) Temperature
         if temperature != 1.0:
             last_logits = last_logits / temperature
 
-        # c) Convert logits -> probabilities
-        probs = F.softmax(last_logits, dim=-1)  # shape [1, vocab_size]
+        # --- NEW: clip logits to avoid huge exp() in softmax ---
+        # E.g., clamp to [-100, 100], which is usually safe.
+        last_logits = torch.clamp(last_logits, min=-100.0, max=100.0)
 
-        # d) Sort descending => top-p
-        sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+        # c) Softmax
+        probs = F.softmax(last_logits, dim=-1)[0]  # shape [vocab_size]
+
+        # d) Sort descending
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-        # e) Identify the tokens that exceed top_p
-        cutoff_mask = cumulative_probs > top_p
-
-        # ---- SHIFT the mask by 1 so we never zero out the highest-prob token ----
-        # (This ensures the distribution never becomes all-zero or sums to zero.)
+        # e) Identify cutoff
+        cutoff_mask = (cumulative_probs > top_p)
+        # SHIFT by 1 so we never remove the top token
         cutoff_mask = torch.roll(cutoff_mask, 1, dims=-1)
-        cutoff_mask[0, 0] = False  # keep the top token
-
-        # f) Zero out everything after the cutoff
+        cutoff_mask[0] = False
         sorted_probs[cutoff_mask] = 0.0
 
-        # g) Re-normalize
-        sum_trunc = sorted_probs.sum(dim=-1, keepdim=True) + 1e-12
-        sorted_probs = sorted_probs / sum_trunc
+        # --- NEW: clamp negative or NaN just in case ---
+        # (Rarely needed if the above code is correct, but we do it for safety.)
+        sorted_probs = torch.nan_to_num(sorted_probs, nan=0.0, posinf=0.0, neginf=0.0)
+        sorted_probs = torch.clamp(sorted_probs, min=0.0, max=1.0)
 
-        # h) Sample from the truncated distribution
-        sample_idx_in_sorted = torch.multinomial(sorted_probs, 1).item()
-        next_token_id = sorted_indices[0, sample_idx_in_sorted].item()
+        # f) Sum -> re-normalize or fallback
+        sum_trunc = sorted_probs.sum()
+        if sum_trunc < 1e-12:
+            # fallback: pick the single highest-prob token
+            next_token_id = sorted_indices[0].item()
+        else:
+            sorted_probs = sorted_probs / sum_trunc
+            sample_idx_in_sorted = torch.multinomial(sorted_probs, 1).item()
+            next_token_id = sorted_indices[sample_idx_in_sorted].item()
 
-        # i) Append to sequence
         generated_tokens.append(next_token_id)
 
-        # Check for EOS
+        # g) EOS check
         if tokenizer.eos_token_id is not None and next_token_id == tokenizer.eos_token_id:
             break
 
-        # Check custom stop sequences
+        # h) custom stop sequences
         current_text = tokenizer.decode(generated_tokens)
         maybe_stopped = check_stop_sequences(current_text, stop_seqs)
         if maybe_stopped is not None:
             current_text = maybe_stopped
             break
 
-        # j) Next step: feed only the new token + the existing KV-cache
+        # i) Next step: feed only the new token
         next_input_ids = torch.tensor([[next_token_id]], device=device)
         with torch.no_grad():
             outputs = model(next_input_ids, use_cache=True, past_key_values=past_key_values)
-            logits = outputs.logits  # shape [1, 1, vocab_size]
+            logits = outputs.logits
             past_key_values = outputs.past_key_values
 
-    # Done
+    # final decode
     raw_output = tokenizer.decode(generated_tokens)
     if remove_prompt:
         return remove_prompt_prefix(raw_output, prompt)

@@ -24,8 +24,11 @@ def top_p_generate_torch(
           (no KV-cache). For large models, consider an incremental 
           decode approach.
 
-    We fix potential "zero distribution" or NaN issues by shifting 
-    the cutoff mask so at least the highest-prob token is always kept.
+    We fix potential "zero distribution" or NaN/Inf issues by:
+      1) Clamping logits to avoid huge overflow in softmax
+      2) Shifting the cutoff mask so at least the highest-prob token is always kept
+      3) If the truncated sum < 1e-12, fallback to top token
+      4) Clamping any NaNs/negatives in probabilities 
     """
     # 1) Prepare stop sequences
     stop_seqs = prepare_stop_sequences(stop_sequences)
@@ -51,40 +54,46 @@ def top_p_generate_torch(
             # shape: [batch=1, seq_len, vocab_size]
             logits = model(input_ids).logits
 
-        # Get logits for the last token
+        # 4) Get logits for the last token
         next_token_logits = logits[:, -1, :]
 
-        # 4) Temperature scaling
+        # 5) Temperature scaling
         if temperature != 1.0:
             next_token_logits = next_token_logits / temperature
 
-        # 5) Convert logits -> probabilities
+        # --- NEW: clip logits to avoid overflow in softmax ---
+        next_token_logits = torch.clamp(next_token_logits, min=-100.0, max=100.0)
+
+        # 6) Convert logits -> probabilities
         probs = F.softmax(next_token_logits, dim=-1)[0]  # shape [vocab_size]
 
-        # 6) Sort descending for top-p
+        # 7) Sort descending for top-p
         sorted_probs, sorted_indices = torch.sort(probs, descending=True)
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-        # 7) Identify tokens that exceed top_p
+        # 8) Identify tokens that exceed top_p
         cutoff_mask = cumulative_probs > top_p
 
-        # SHIFT the cutoff mask so the top token is never zeroed out
-        # (prevents sum=0 if the highest-prob token alone > top_p).
+        # SHIFT the cutoff mask by 1 so the top token isn't zeroed out
         cutoff_mask = torch.roll(cutoff_mask, 1, dims=-1)
         cutoff_mask[0] = False
-
-        # 8) Zero out everything beyond cutoff
         sorted_probs[cutoff_mask] = 0.0
 
-        # 9) Re-normalize
-        sum_trunc = sorted_probs.sum(dim=-1, keepdim=True) + 1e-12
-        sorted_probs = sorted_probs / sum_trunc
+        # --- clamp any potential NaNs or negatives ---
+        sorted_probs = torch.nan_to_num(sorted_probs, nan=0.0, posinf=0.0, neginf=0.0)
+        sorted_probs = torch.clamp(sorted_probs, min=0.0, max=1.0)
 
-        # 10) Sample from truncated distribution
-        sample_idx_in_sorted = torch.multinomial(sorted_probs, 1).item()
-        next_token_id = sorted_indices[sample_idx_in_sorted].item()
+        # 9) Re-normalize or fallback
+        sum_trunc = sorted_probs.sum()
+        if sum_trunc < 1e-12:
+            # fallback to picking the single highest-prob token
+            next_token_id = sorted_indices[0].item()
+        else:
+            sorted_probs = sorted_probs / sum_trunc
+            sample_idx_in_sorted = torch.multinomial(sorted_probs, 1).item()
+            next_token_id = sorted_indices[sample_idx_in_sorted].item()
 
-        # 11) Append the new token
+        # 10) Append new token
         tokens.append(next_token_id)
 
         # Early stop: EOS
@@ -97,7 +106,7 @@ def top_p_generate_torch(
         if maybe_truncated is not None:
             return maybe_truncated
 
-    # 12) Final decode + optional prompt removal
+    # 11) Final decode + optional prompt removal
     raw_output = tokenizer.decode(tokens)
     if remove_prompt:
         return remove_prompt_prefix(raw_output, prompt)

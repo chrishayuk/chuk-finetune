@@ -1,3 +1,4 @@
+import logging
 import torch
 import numpy as np
 
@@ -6,6 +7,21 @@ from train.grpo.torch.grpo_utils import gather_kl_divergence, gather_logprobs
 from train.grpo.torch.grpo_loss import compute_advantages, grpo_loss
 from train.grpo.torch.grpo_generation import generate_single_response_and_oldlogprob
 from train.grpo.grpo_prepare import prepare_batch_data_for_grpo
+
+# Logging setup
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
+
+# Optional color codes (for nicer console logs)
+RESET = "\033[0m"
+BOLD = "\033[1m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+RED = "\033[91m"
+
+def color_text(text, color):
+    return f"{color}{text}{RESET}"
 
 def ensure_dict_torch(item):
     """
@@ -160,5 +176,7 @@ class GRPOTrainer(Trainer):
         return mean_loss, mean_reward
 
     def on_batch_end(self, epoch, batch_idx, loss, reward):
-        if self.verbose:
-            print(f"[Torch GRPO] E{epoch}B{batch_idx} => Loss: {loss:.4f}, Mean Reward: {reward:.4f}")
+        logger.info(color_text(
+            f"[Torch GRPO] E{epoch}B{batch_idx} => Loss: {loss:.4f}, Mean Reward: {reward:.4f}",
+            YELLOW
+        ))
