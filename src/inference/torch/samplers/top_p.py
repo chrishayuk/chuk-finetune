@@ -1,4 +1,5 @@
 # src/inference/torch/samplers/top_p.py
+
 import torch
 import torch.nn.functional as F
 
@@ -18,14 +19,18 @@ def top_p_generate_torch(
     """
     Token-by-token Top-p (nucleus) sampling in Torch, 
     with optional stop sequences and prompt-prefix removal.
-    
-    NOTE: This code still re-runs the entire sequence each step. 
-          For large models, implement KV-caching to speed it up.
+
+    NOTE: This code still re-runs the entire sequence each step 
+          (no KV-cache). For large models, consider an incremental 
+          decode approach.
+
+    We fix potential "zero distribution" or NaN issues by shifting 
+    the cutoff mask so at least the highest-prob token is always kept.
     """
-    # Prepare stop sequences
+    # 1) Prepare stop sequences
     stop_seqs = prepare_stop_sequences(stop_sequences)
 
-    # Basic init
+    # 2) Basic setup
     eos_id = tokenizer.eos_token_id
     tokens = tokenizer.encode(prompt)
     if not tokens:
@@ -33,70 +38,67 @@ def top_p_generate_torch(
             raise ValueError("No tokens found and no eos_token_id in tokenizer.")
         tokens = [eos_id]
 
+    # Attempt to find model device, else default CPU
     device = getattr(model, "device", torch.device("cpu"))
 
+    # 3) Generate tokens
     for _ in range(max_new_tokens):
         # Convert tokens -> input_ids on correct device
         input_ids = torch.tensor([tokens], dtype=torch.long, device=device)
 
         # Forward pass (no grad)
         with torch.no_grad():
-            # model(...) => [batch, seq_len, vocab_size]
+            # shape: [batch=1, seq_len, vocab_size]
             logits = model(input_ids).logits
 
-        # Get logits for the last token in the sequence
-        next_token_logits = logits[:, -1, :]  # shape [1, vocab_size]
+        # Get logits for the last token
+        next_token_logits = logits[:, -1, :]
 
-        # Temperature scaling
+        # 4) Temperature scaling
         if temperature != 1.0:
             next_token_logits = next_token_logits / temperature
 
-        # Convert logits -> probabilities
-        # shape: [1, vocab_size], so we take [0] to get a 1D tensor of shape [vocab_size]
-        probs = F.softmax(next_token_logits, dim=-1)[0]
+        # 5) Convert logits -> probabilities
+        probs = F.softmax(next_token_logits, dim=-1)[0]  # shape [vocab_size]
 
-        # ---- Top-p (nucleus) filtering in descending order ----
-        # 1. Sort tokens by descending probability
+        # 6) Sort descending for top-p
         sorted_probs, sorted_indices = torch.sort(probs, descending=True)
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-        # 2. Identify the tokens that push us past top_p
+        # 7) Identify tokens that exceed top_p
         cutoff_mask = cumulative_probs > top_p
 
-        # 3. Zero out everything past the cutoff
-        #    (We keep at least the first token even if it’s > top_p itself,
-        #     but in normal conditions we rarely see a single prob > top_p.)
-        # A quick trick: shift cutoff_mask right by 1 so the “first True” remains included
+        # SHIFT the cutoff mask so the top token is never zeroed out
+        # (prevents sum=0 if the highest-prob token alone > top_p).
         cutoff_mask = torch.roll(cutoff_mask, 1, dims=-1)
-        cutoff_mask[0] = False  # The highest-prob token is always kept
+        cutoff_mask[0] = False
+
+        # 8) Zero out everything beyond cutoff
         sorted_probs[cutoff_mask] = 0.0
 
-        # 4. Re-normalize to sum to 1
-        sorted_probs = sorted_probs / (sorted_probs.sum(dim=-1, keepdim=True) + 1e-12)
+        # 9) Re-normalize
+        sum_trunc = sorted_probs.sum(dim=-1, keepdim=True) + 1e-12
+        sorted_probs = sorted_probs / sum_trunc
 
-        # 5. Sample from the truncated + renormalized distribution
-        #    (Use torch.multinomial on the re-scaled probabilities)
+        # 10) Sample from truncated distribution
         sample_idx_in_sorted = torch.multinomial(sorted_probs, 1).item()
         next_token_id = sorted_indices[sample_idx_in_sorted].item()
 
-        # Append the new token
+        # 11) Append the new token
         tokens.append(next_token_id)
 
-        # Stop if we hit EOS
+        # Early stop: EOS
         if eos_id is not None and next_token_id == eos_id:
             break
 
-        # Check custom stop sequences
+        # Custom stop sequences
         current_text = tokenizer.decode(tokens)
         maybe_truncated = check_stop_sequences(current_text, stop_seqs)
         if maybe_truncated is not None:
             return maybe_truncated
 
-    # Decode the entire generated text
+    # 12) Final decode + optional prompt removal
     raw_output = tokenizer.decode(tokens)
-
-    # Optionally remove the original prompt from the final output
     if remove_prompt:
         return remove_prompt_prefix(raw_output, prompt)
     return raw_output
-

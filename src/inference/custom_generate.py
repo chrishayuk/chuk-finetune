@@ -45,7 +45,7 @@ def custom_generate(
         )
     else:
         # Make sure top_p_generate_torch also accepts stop_sequences
-        return top_p_generate_torch(
+        return top_p_generate_with_kvcache_mlx(
             model=model,
             tokenizer=tokenizer,
             prompt=prompt,

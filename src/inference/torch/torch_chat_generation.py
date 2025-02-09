@@ -1,7 +1,7 @@
 import logging
 
 # imports
-from inference.torch.custom_generate_torch import (greedy_generate_torch, top_p_generate_torch)
+from inference.torch.custom_generate_torch import (greedy_generate_torch, top_p_generate_torch, top_p_generate_torch_with_kvcache)
 from inference.chat_template import build_chat_prompt, remove_special_tokens_from_text
 
 # logger
@@ -54,7 +54,7 @@ def torch_chat_generation(
         )
     elif sampler == "top_p":
         # top p
-        raw_output = top_p_generate_torch(
+        raw_output = top_p_generate_torch_with_kvcache(
             model=loaded_model,
             tokenizer=loaded_tokenizer,
             prompt=final_prompt,

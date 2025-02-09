@@ -3,7 +3,7 @@ import logging
 import torch
 
 # imports
-from inference.torch.custom_generate_torch import top_p_generate_torch
+from inference.torch.custom_generate_torch import top_p_generate_torch, top_p_generate_torch_with_kvcache
 from train.grpo.torch.grpo_utils import gather_logprobs
 
 # logger
@@ -26,7 +26,7 @@ def generate_single_response_and_oldlogprob(
     stop_seqs = ["<|endoftext|>"]
 
     # 1) Perform token-by-token top-p generation, matching deepseek
-    raw_resp = top_p_generate_torch(
+    raw_resp = top_p_generate_torch_with_kvcache(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
