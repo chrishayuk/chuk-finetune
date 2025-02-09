@@ -37,7 +37,7 @@ def main():
     dataset = load_prompts_and_verifiers("dataset/zero/verifier_samples_very_easy.jsonl")
 
     # Prepare and transform prompts
-    prepared_dataset = prepare_prompts(dataset)
+    prepared_dataset = prepare_prompts(dataset, "src/cli/train/templates/prompt_template.jinja2")
 
     # Define an integrated reward function
     def integrated_reward(response_text, item):
@@ -51,8 +51,8 @@ def main():
         tokenizer=tokenizer,
         dataset=prepared_dataset,
         calculate_reward=integrated_reward,
-        lr=1e-6,         # Learning rate
-        epochs=1,        # Number of epochs
+        lr=1e-5,         # Learning rate
+        epochs=5,        # Number of epochs
         batch_size=2,    # Batch size
         G=4,             # Generate 2 responses per prompt
         device=args.device,

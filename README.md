@@ -8,6 +8,12 @@ If you wish to chat with a model through the interactive chat, you can run the f
 uv run inference-cli --chat --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device cpu
 ```
 
+uv run inference-cli --model_name "Qwen/Qwen2.5-3B-instruct" --max_new_tokens 256 --device cpu --load_adapter_path "adapters/math" --prompt "what's 25 + 30"
+
+uv run inference-cli --model_name "Qwen/Qwen2.5-3B-instruct" --max_new_tokens 256 --device cpu --load_adapter_path "adapters/math" --prompt "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the think tags and then provides the user with the answer in a user friendly manner within the answer tags, and finally also provides just the answer within the verifier tags, so it can be checked by an automated process. The reasoning process, answer and verifier answer are enclosed within <think> </think> <answer> </answer> and <verifier_answer> </verifier_answer> tags, respectively, i.e., <think>reasoning process here</think><answer>user answer here</answer><verifier_answer>verifier answer here</verifier_answer>. User: What's 10 + 10? Assistant: <think>"
+
+uv run inference-cli --model_name "Qwen/Qwen2.5-3B-instruct" --max_new_tokens 256 --device cpu --prompt "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the think tags and then provides the user with the answer in a user friendly manner within the answer tags, and finally also provides just the answer within the verifier tags, so it can be checked by an automated process. The reasoning process, answer and verifier answer are enclosed within <think> </think> <answer> </answer> and <verifier_answer> </verifier_answer> tags, respectively, i.e., <think>reasoning process here</think><answer>user answer here</answer><verifier_answer>verifier answer here</verifier_answer>. User: What's 10 + 20 - 7? Assistant: <think>"
+
 ### Sampling
 If you wish to test out prompts for sampling, see the inference.md file for more details
 However the following command shows you how to generate multiple samples

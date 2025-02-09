@@ -74,5 +74,13 @@ def parse_arguments():
              "If >1 and sampler=top_p, we do multiple top-p samples."
     )
 
+    # <--- load_adapter_path argument --->
+    parser.add_argument(
+        "--load_adapter_path",
+        type=str,
+        default=None,
+        help="Path to an adapter checkpoint to load. If not provided, no adapters are loaded."
+    )
+
     # parse and return
     return parser.parse_args()

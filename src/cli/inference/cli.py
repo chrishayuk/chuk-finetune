@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # src/cli/inference/cli.py
+
 import sys
+import os  # <-- needed for checking file existence
 import logging
 
 from cli.inference.arg_parser import parse_arguments
 from model.model_loader import load_model_and_tokenizer
+from model.adapters import load_adapters  # <-- import adapter function
 from inference.infer import run_inference
 
 logging.basicConfig(
@@ -44,7 +47,7 @@ def color_print(role_color, role_label, text=""):
     print(f"{role_color}{role_label}{ANSI_RESET} {text}")
 
 def main():
-    # parse arguments
+    # parse arguments
     args = parse_arguments()
 
     # Convert the comma-separated string to a list, or empty if none
@@ -67,15 +70,22 @@ def main():
     logger.info("Loading model: %s (device=%s)", args.model_name, device or "auto")
     model, tokenizer, is_mlx = load_model_and_tokenizer(args.model_name, device)
 
-    # clear messages
+    # Load adapters if user provided a path
+    if args.load_adapter_path is not None:
+        if not os.path.isfile(args.load_adapter_path):
+            raise FileNotFoundError(f"Could not find adapter file: {args.load_adapter_path}")
+        logger.info(f"Loading adapters from {args.load_adapter_path}...")
+        load_adapters(model, args.load_adapter_path)
+
+    # clear messages
     user_messages = []
     assistant_messages = []
 
-    # use the chat template, if chat specified
+    # use the chat template, if chat specified
     use_chat_template = args.chat
 
-    # we don't support streaming for now
-    stream_mode = False # getattr(args, "stream", False)
+    # we don't support streaming for now
+    stream_mode = False  # getattr(args, "stream", False)
 
     # check if chat mode
     if not args.chat:
@@ -113,8 +123,8 @@ def main():
             for i, resp_text in enumerate(response_or_generator, start=1):
                 final_text = extract_last_assistant_block(resp_text)
                 color_print(ANSI_YELLOW,
-                    f"Assistant (Sample {i}/{len(response_or_generator)}):",
-                    final_text
+                            f"Assistant (Sample {i}/{len(response_or_generator)}):",
+                            final_text
                 )
                 print()  # extra blank line
         else:
@@ -138,11 +148,11 @@ def main():
         # Chat mode
         print("Entering chat mode. Type 'exit' or 'quit' to end.\n")
 
-        # print the system prompt
+        # print the system prompt
         color_print(ANSI_BLUE, "System:", system_prompt)
         print()
 
-        # chat loop
+        # chat loop
         while True:
             try:
                 # get the user prompt
@@ -151,16 +161,15 @@ def main():
                 print("\nExiting chat mode.")
                 sys.exit(0)
 
-            # check if the user wants to quit
+            # check if the user wants to quit
             if user_input.strip().lower() in ["exit", "quit"]:
-                # quit
                 print("Exiting chat mode.")
                 break
 
             # add the user prompt to the context
             user_messages.append(user_input)
 
-            # run inferences
+            # run inferences
             response_or_generator = run_inference(
                 model=model,
                 tokenizer=tokenizer,
@@ -195,11 +204,11 @@ def main():
             # add the final text to the assistant message
             assistant_messages.append(final_text)
 
-            # print the assistant message
+            # print the assistant message
             color_print(ANSI_YELLOW, "Assistant:", final_text)
             print()
 
-        # chat ended
+        # chat ended
         print("Chat session ended.")
 
 
