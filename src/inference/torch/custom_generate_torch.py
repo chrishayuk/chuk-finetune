@@ -2,6 +2,10 @@
 import torch
 import torch.nn.functional as F
 
+# import stop and prompt utils
+from inference.stop_utils import prepare_stop_sequences, check_stop_sequences
+from inference.prompt_removal import remove_prompt_prefix
+
 def top_p_generate_torch(
     model,
     tokenizer,
@@ -9,29 +13,17 @@ def top_p_generate_torch(
     max_new_tokens: int = 2000,
     temperature: float = 0.6,
     top_p: float = 0.95,
-    stop_sequences=None
+    stop_sequences=None,
+    remove_prompt: bool = True
 ):
     """
-    Token-by-token Top-p (nucleus) sampling in Torch, with 'stop sequences ANYWHERE'.
-    By default uses temperature=0.6, top_p=0.95, up to 2000 new tokens.
-
-    :param model: A Hugging Face (or compatible) Torch model returning logits of shape [1, seq_len, vocab_size].
-    :param tokenizer: The tokenizer for encoding/decoding text.
-    :param prompt: The text prompt to start generation from.
-    :param max_new_tokens: The maximum number of tokens to generate beyond the prompt.
-    :param temperature: Sampling temperature (>= 0.0). Larger => more randomness.
-    :param top_p: Probability threshold for nucleus sampling.
-    :param stop_sequences: A list of strings to stop generation if the *current*
-                           text contains them *anywhere*. If found, we truncate
-                           at the *first* occurrence and return.
-    :return: The final generated text (prompt + newly generated content), or
-             truncated if a stop sequence is found.
+    Token-by-token Top-p (nucleus) sampling in Torch, with optional stop sequences
+    ANYWHERE in the text, plus optional removal of the prompt prefix at the end.
     """
+    # 1) Prepare the stop-sequence regexes
+    stop_seqs = prepare_stop_sequences(stop_sequences)
 
-    if stop_sequences is None:
-        stop_sequences = []
-
-    # 1) Encode the prompt
+    # 2) Encode the prompt
     eos_id = tokenizer.eos_token_id
     tokens = tokenizer.encode(prompt)
     if not tokens:
@@ -39,71 +31,64 @@ def top_p_generate_torch(
             raise ValueError("No tokens found and no eos_token_id in tokenizer.")
         tokens = [eos_id]
 
-    device = getattr(model, "device", "cpu")  # Attempt to get the model's device
-    # 2) Iteratively generate new tokens
+    device = getattr(model, "device", torch.device("cpu"))
+
+    # 3) Iteratively generate new tokens
     for _ in range(max_new_tokens):
-        # shape [1, seq_len]
         input_ids = torch.tensor([tokens], dtype=torch.long, device=device)
 
         with torch.no_grad():
-            # shape => [1, seq_len, vocab_size]
-            logits = model(input_ids).logits
+            logits = model(input_ids).logits  # [1, seq_len, vocab_size]
 
-        # Last step logits => shape [1, vocab_size]
+        # Next-token logits => [1, vocab_size]
         next_token_logits = logits[:, -1, :]
 
-        # Apply temperature
+        # Temperature
         if temperature != 1.0:
             next_token_logits = next_token_logits / temperature
 
-        # Convert logits -> probabilities
-        probs = F.softmax(next_token_logits, dim=-1)  # shape [1, vocab_size]
+        # Convert to probabilities
+        probs = F.softmax(next_token_logits, dim=-1)[0]  # shape: [vocab_size]
 
-        # Flatten for convenience
-        probs = probs[0]  # shape: [vocab_size]
-
-        # Sort tokens by ascending probability
+        # Sort ascending
         sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=False)
-        # sorted_probs, sorted_indices => shape [vocab_size], ascending
 
         # Cumulative sum
         cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-        # Identify cutoff where sum >= (1 - top_p)
+        # Identify cutoff (top-p)
         cutoff_mask = cumulative_probs > (1.0 - top_p)
+        truncated_probs = torch.where(cutoff_mask, sorted_probs, torch.tensor(0.0, device=probs.device))
 
-        # Zero out everything below threshold
-        truncated_probs = torch.where(
-            cutoff_mask,
-            sorted_probs,
-            torch.tensor(0.0, device=probs.device)
-        )
-
-        # Convert to log-probs for sampling
+        # Log-probs for sampling
         truncated_logprobs = torch.log(truncated_probs + 1e-12)
 
-        # Sample from the truncated distribution
-        sampled_idx = torch.multinomial(torch.exp(truncated_logprobs), 1).item()
-        # Map from sorted index back to real token ID
-        next_token_id = sorted_indices[sampled_idx].item()
+        # Sample from truncated distribution
+        sample_idx = torch.multinomial(torch.exp(truncated_logprobs), 1).item()
+        next_token_id = sorted_indices[sample_idx].item()
 
-        # Append
         tokens.append(next_token_id)
 
-        # If we hit EOS => break
+        # Check for EOS
         if eos_id is not None and next_token_id == eos_id:
             break
 
-        # 3) Check stop sequences ANYWHERE in partial text
+        # 4) Check stop sequences ANYWHERE
         current_text = tokenizer.decode(tokens)
-        for seq in stop_sequences:
-            idx = current_text.find(seq)
-            if idx != -1:
-                # Found a stop sequence => truncate
-                return current_text[:idx]
+        maybe_truncated = check_stop_sequences(current_text, stop_seqs)
+        if maybe_truncated is not None:
+            # Return truncated
+            return maybe_truncated
 
-    # 4) Done => decode entire sequence
-    return tokenizer.decode(tokens)
+    # 5) If we finish naturally => decode
+    raw_output = tokenizer.decode(tokens)
+
+    # 6) Optionally remove the prompt prefix if the model repeated it at the start
+    if remove_prompt:
+        final_output = remove_prompt_prefix(raw_output, prompt)
+        return final_output
+    else:
+        return raw_output
 
 
 def greedy_generate_torch(
@@ -111,25 +96,15 @@ def greedy_generate_torch(
     tokenizer,
     prompt: str,
     max_new_tokens: int = 2000,
-    stop_sequences=None
+    stop_sequences=None,
+    remove_prompt: bool = True
 ):
     """
-    Original token-by-token greedy decoding in Torch,
-    now with optional 'stop sequences ANYWHERE'.
-
-    :param model: A Hugging Face (or compatible) Torch model returning logits [1, seq_len, vocab_size].
-    :param tokenizer: The tokenizer for encoding/decoding text.
-    :param prompt: The text prompt to start generation from.
-    :param max_new_tokens: The maximum number of tokens to generate beyond the prompt.
-    :param stop_sequences: A list of strings to stop generation if the *current*
-                           text contains them ANYWHERE. If found, we truncate
-                           at the *first* occurrence and return immediately.
-    :return: The final generated text (prompt + newly generated content),
-             or truncated if a stop sequence is found.
+    Token-by-token greedy decoding in Torch,
+    with optional stop sequences ANYWHERE and optional prompt-prefix removal.
     """
-
-    if stop_sequences is None:
-        stop_sequences = []
+    # 1) Prepare stop sequences
+    stop_seqs = prepare_stop_sequences(stop_sequences)
 
     eos_id = tokenizer.eos_token_id
     tokens = tokenizer.encode(prompt)
@@ -138,33 +113,35 @@ def greedy_generate_torch(
             raise ValueError("No tokens found and no eos_token_id in tokenizer.")
         tokens = [eos_id]
 
-    # Attempt to get the model's device
     device = getattr(model, "device", torch.device("cpu"))
 
+    # 2) Loop up to max_new_tokens
     for _ in range(max_new_tokens):
-        # shape [1, seq_len]
         input_ids = torch.tensor([tokens], dtype=torch.long, device=device)
         with torch.no_grad():
-            # shape => [1, seq_len, vocab_size]
-            logits = model(input_ids).logits
+            logits = model(input_ids).logits  # [1, seq_len, vocab_size]
 
-        # Last step logits => shape [1, vocab_size]
+        # [1, vocab_size]
         last_logits = logits[:, -1, :]
-        # Argmax => GREEDY
-        next_token = torch.argmax(last_logits, dim=-1).item()
-        tokens.append(next_token)
+        next_token_id = torch.argmax(last_logits, dim=-1).item()
+        tokens.append(next_token_id)
 
-        # If we hit EOS => break
-        if eos_id is not None and next_token == eos_id:
+        # EOS?
+        if eos_id is not None and next_token_id == eos_id:
             break
 
-        # Check stop sequences ANYWHERE in partial decode
+        # 3) Check stop sequences ANYWHERE
         current_text = tokenizer.decode(tokens)
-        for seq in stop_sequences:
-            idx = current_text.find(seq)
-            if idx != -1:
-                # Truncate at the earliest match
-                return current_text[:idx]
+        maybe_truncated = check_stop_sequences(current_text, stop_seqs)
+        if maybe_truncated is not None:
+            return maybe_truncated
 
-    return tokenizer.decode(tokens)
+    # 4) Done => decode
+    raw_output = tokenizer.decode(tokens)
 
+    # 5) remove prompt prefix if desired
+    if remove_prompt:
+        final_output = remove_prompt_prefix(raw_output, prompt)
+        return final_output
+    else:
+        return raw_output

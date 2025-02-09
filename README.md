@@ -1,3 +1,8 @@
+# Inference
+
+
+
+
 ## Chat
 If you wish to chat with a model through the interactive chat, you can run the following comman
 

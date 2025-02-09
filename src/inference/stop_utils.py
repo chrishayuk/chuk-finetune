@@ -3,20 +3,19 @@ import re
 
 def make_stop_regex(stop_seq: str):
     """
-    Given a stop sequence like 'User:', return a regex that matches it anywhere.
-    Example: 'User:' => re.compile(r'User:')
+    Convert a stop sequence (like 'User:' or '</answer>') into a regex
+    that matches it anywhere, plus optional trailing whitespace.
+    e.g. 'User:' => r'User:\s*'
     """
-    # escape sequence match
-    escaped_seq = re.escape(stop_seq)
-
-    # return the match
-    return re.compile(escaped_seq)
+    # Escape the sequence, then allow trailing whitespace
+    escaped_seq = re.escape(stop_seq) + r"\s*"
+    pattern = re.compile(escaped_seq)
+    return pattern
 
 def prepare_stop_sequences(stop_sequences):
     """
-    Turn each string in 'stop_sequences' into a compiled regex that
-    matches anywhere in the text.
-    Returns a list of (compiled_regex, original_seq).
+    Compile each stop sequence into a regex that matches the sequence
+    plus optional trailing whitespace, and return them in a list.
     """
     result = []
     for seq in (stop_sequences or []):
@@ -26,19 +25,28 @@ def prepare_stop_sequences(stop_sequences):
 
 def check_stop_sequences(decoded_text: str, stop_sequences):
     """
-    Check if 'decoded_text' contains any of the stop-sequence regexes.
-    If found, we truncate the text at the earliest match index.
-    Return the truncated text if a match is found, otherwise None.
+    Check if 'decoded_text' contains any of the compiled stop-sequence regexes.
+    If found, we truncate the text at the earliest match index and return it.
+    Otherwise, return None.
     """
     earliest_idx = None
+    found_seq = None
     for pattern, original_seq in stop_sequences:
         match = pattern.search(decoded_text)
         if match:
             idx = match.start()
             if earliest_idx is None or idx < earliest_idx:
                 earliest_idx = idx
+                found_seq = original_seq
 
     if earliest_idx is not None:
-        return decoded_text[:earliest_idx]
+        truncated = decoded_text[:earliest_idx]
+        # Debug print for clarity
+        print(f"[DEBUG] Found stop seq '{found_seq}' at index {earliest_idx}. "
+              f"Truncating => {repr(truncated[-60:])} (last 60 chars)")
+        return truncated
+
+    # Optional debug if no match is found
+    # print("[DEBUG] No stop sequences found in =>", repr(decoded_text[-60:]))
 
     return None
