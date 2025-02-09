@@ -2,20 +2,22 @@
 # main.py
 import os
 
-# Training imports
-from reward_functions import combined_calculate_reward, set_eval_model
+# dataset
+from dataset.verifiers_dataset_loader import load_prompts_and_verifiers
+from dataset.prompt_handler import prepare_prompts
+
+# train
+from train.grpo.grpo_model_loader import load_models
 from train.grpo.grpo_trainer import train_grpo
+from reward_functions import combined_calculate_reward
+
+# adapters
+from model.adapters import save_adapters, load_adapters
 
 # CLI imports
 from cli.train.arg_parser import parse_arguments
 from cli.train.logger_config import YELLOW, logger, color_text, BOLD, GREEN
-from cli.train.model_loader import load_models
 from cli.train.training_monitor import monitor_training_progress
-from cli.train.prompt_handler import prepare_prompts
-from cli.train.verifiers_dataset_loader import load_prompts_and_verifiers
-
-# adapters
-from model.adapters import save_adapters, load_adapters
 
 def main():
     # Parse CLI arguments.

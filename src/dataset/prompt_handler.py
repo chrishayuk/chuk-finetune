@@ -1,8 +1,8 @@
-# src/cli/train/prompt_handler.py
+# src/dataset/prompt_handler.py
 import os
 
 # imports
-from cli.train.prompt_renderer import PromptRenderer
+from dataset.prompt_renderer import PromptRenderer
 
 def prepare_prompts(dataset, template_path=None):
     """

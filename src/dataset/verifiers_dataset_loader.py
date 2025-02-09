@@ -1,5 +1,4 @@
-# src/cli/train/verifiers_dataset_loader.py
-
+# src/dataset/verifiers_dataset_loader.py
 import json
 from cli.train.logger_config import logger
 

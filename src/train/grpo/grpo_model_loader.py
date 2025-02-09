@@ -1,7 +1,6 @@
-# src/cli/train/model_loader.py
+# src/train/grpo_model_loader.py
 from cli.train.logger_config import logger, color_text, BOLD
 from model.model_loader import load_model_and_tokenizer
-import torch
 
 def load_models(model_name, device_override):
     logger.info(color_text(f"Loading base model & tokenizer: {model_name}", BOLD))
