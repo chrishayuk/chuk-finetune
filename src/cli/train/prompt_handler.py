@@ -4,19 +4,23 @@ import os
 # imports
 from cli.train.prompt_renderer import PromptRenderer
 
-def prepare_prompts(dataset):
+def prepare_prompts(dataset, template_path=None):
     """
     Converts each dataset entry into rendered prompt text using the Jinja template.
     Preserves the 'verifiers' key if present.
     
     :param dataset: A list of dataset entries, each containing at least a "prompt" key.
+    :param template_path: Optional path to the Jinja template. If None, defaults
+                          to 'templates/prompt_template.jinja2' in the same
+                          folder as this file.
     :return: A list of dicts, each containing:
              - "prompt": the rendered text
              - "verifiers": the original verifiers if present
     """
-    # Build the template path based on this file's location
-    base_dir = os.path.dirname(__file__)
-    template_path = os.path.join(base_dir, "templates", "prompt_template.jinja2")
+    # If no custom template_path is provided, use the local templates directory
+    if template_path is None:
+        base_dir = os.path.dirname(__file__)
+        template_path = os.path.join(base_dir, "templates", "prompt_template.jinja2")
 
     prepared = []
 
