@@ -23,6 +23,8 @@ def generate_single_response_and_oldlogprob(
     that final text through the model and calling gather_logprobs(...).
     """
 
+    stop_seqs = ["<|endoftext|>"]
+
     # 1) Perform token-by-token top-p generation, matching deepseek
     raw_resp = top_p_generate_torch(
         model=model,
@@ -30,7 +32,8 @@ def generate_single_response_and_oldlogprob(
         prompt=prompt,
         max_new_tokens=max_new_tokens,
         temperature=0.6,
-        top_p=0.95
+        top_p=0.95,
+        stop_sequences = stop_seqs
     ).strip()
 
     # 2) Add "<think>" prefix

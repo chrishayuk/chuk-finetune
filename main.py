@@ -34,7 +34,7 @@ def main():
 
     # Load the dataset (prompts + verifiers).
     logger.info("Loading dataset (prompts + verifiers)...")
-    dataset = load_prompts_and_verifiers("dataset/zero/verifier_2_samples_very_easy.jsonl")
+    dataset = load_prompts_and_verifiers("dataset/zero/verifier_samples_very_easy.jsonl")
 
     # Prepare and transform prompts
     prepared_dataset = prepare_prompts(dataset)
@@ -51,9 +51,9 @@ def main():
         dataset=prepared_dataset,
         calculate_reward=integrated_reward,
         lr=1e-6,         # Learning rate
-        epochs=10,       # Number of epochs
+        epochs=1,       # Number of epochs
         batch_size=2,    # Batch size
-        G=2,             # Generate 2 responses per prompt
+        G=4,             # Generate 2 responses per prompt
         device=args.device,
         verbose=True,
         as_generator=True  # <-- IMPORTANT: we want a generator for step-by-step
