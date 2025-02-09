@@ -44,6 +44,7 @@ def main():
         return combined_calculate_reward(response_text, item)
     
     # --- (2) Train the model via GRPO, returning a generator of events ---
+    # Pass the args.verbose flag to the trainer
     gen_stage1 = train_grpo(
         base_model=base_model,
         ref_model=ref_model,
@@ -51,16 +52,15 @@ def main():
         dataset=prepared_dataset,
         calculate_reward=integrated_reward,
         lr=1e-6,         # Learning rate
-        epochs=1,       # Number of epochs
+        epochs=1,        # Number of epochs
         batch_size=2,    # Batch size
         G=4,             # Generate 2 responses per prompt
         device=args.device,
-        verbose=True,
-        as_generator=True  # <-- IMPORTANT: we want a generator for step-by-step
+        verbose=args.verbose,
+        as_generator=True
     )
 
     # (3) Pass the returned generator to monitor_training_progress
-    #     Suppose your monitor consumes all events and returns (final_loss, final_reward)
     mean_loss_stage1, mean_reward_stage1 = monitor_training_progress(gen_stage1)
 
     logger.info(color_text(

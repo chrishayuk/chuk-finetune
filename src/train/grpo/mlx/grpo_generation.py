@@ -4,7 +4,7 @@ import logging
 import mlx.core as mx
 
 # imports
-from inference.mlx.custom_generate_mlx import top_p_generate
+from inference.mlx.custom_generate_mlx import top_p_generate, top_p_generate_with_kvcache
 from train.grpo.mlx.grpo_loss import gather_logprobs
 
 # logger

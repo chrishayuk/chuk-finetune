@@ -45,7 +45,7 @@ def remote_calculate_reward(response_text: str, item: dict) -> float or None:
         cleaned_text = match.group(1).strip()
         logger.debug(f"Extracted Assistant response: {cleaned_text}")
     else:
-        logger.warning("No explicit 'Assistant:' found; using entire response.")
+        logger.debug("No explicit 'Assistant:' found; using entire response.")
 
     # 3) For the format verifier, check the strict <think>...</think><answer>...</answer> structure
     if item.get("verifier") == "reasoning_format":

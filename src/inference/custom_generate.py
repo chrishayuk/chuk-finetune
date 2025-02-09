@@ -4,6 +4,8 @@ import logging
 # imports
 from inference.torch.custom_generate_torch import top_p_generate_torch
 from inference.mlx.custom_generate_mlx import top_p_generate as top_p_generate_mlx
+from inference.mlx.custom_generate_mlx import top_p_generate as top_p_generate_mlx
+from inference.mlx.samplers.top_p_kvcache import top_p_generate_with_kvcache as top_p_generate_with_kvcache_mlx
 
 # logging
 logger = logging.getLogger(__name__)

@@ -3,7 +3,7 @@ import logging
 import mlx.core as mx
 
 # imports
-from inference.mlx.custom_generate_mlx import top_p_generate
+from inference.mlx.custom_generate_mlx import top_p_generate, top_p_generate_with_kvcache
 from inference.chat_template import build_chat_prompt, remove_special_tokens_from_text
 
 # logger
