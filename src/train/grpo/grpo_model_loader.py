@@ -1,4 +1,5 @@
 # src/train/grpo_model_loader.py
+
 from cli.train.logger_config import logger, color_text, BOLD
 from model.model_loader import load_model_and_tokenizer
 
@@ -20,16 +21,19 @@ def load_models(model_name, device_override):
 
     # 3) If reference model is MLX, freeze it; else (Torch), just do .eval().
     if is_mlx_ref:
-        # MLX model
         ref_model.freeze()
     else:
-        # Torch model => .eval()
-        # You can skip .to(device) if device_map="auto" is used.
         ref_model.eval()
 
-        # If you are NOT using device_map="auto" and have a single device in mind:
-        # device = torch.device(device_override)  # or some logic
-        # ref_model.to(device)
+    # 4) Decide what 'device' to return
+    #    If either the base or ref model is MLX, we return "mlx". 
+    #    Otherwise, you can return the 'device_override' or a default like "cpu".
+    if is_mlx_base or is_mlx_ref:
+        final_device = "mlx"
+    else:
+        # If you wanted a fallback for Torch, 
+        # you might do device_override or "cpu" or "cuda" if you want.
+        final_device = device_override or "cpu"
 
-    # Return everything. If device_map="auto" is used, there's no single device to return.
-    return base_model, ref_model, tokenizer, None
+    # Return the final device instead of None
+    return base_model, ref_model, tokenizer, final_device

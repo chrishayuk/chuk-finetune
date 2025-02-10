@@ -1,10 +1,11 @@
 # src/train/grpo_trainer.py
+import logging
 from train.optimizer_loader import get_optimizer
 from train.dataset_loader import get_dataloader
 from train.generic_train import generic_train
 
-# imports
-from train.trainer_events import TrainerEvent
+# Logging setup
+logger = logging.getLogger(__name__)
 
 def train_grpo(
     base_model,
@@ -40,6 +41,8 @@ def train_grpo(
         from train.grpo.torch.grpo_trainer import GRPOTrainer
         framework = "torch"
         trainer_device = device  # for Torch, might be "cpu", "cuda", etc.
+
+    logger.info(f"DEBUG: device={device}, framework={framework}")
 
     # 2) Create the optimizer (framework independent)
     optimizer = get_optimizer(framework, base_model, lr=lr)

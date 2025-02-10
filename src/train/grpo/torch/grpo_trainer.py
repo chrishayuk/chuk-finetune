@@ -1,16 +1,18 @@
 # src/train/grpo/torch/grpo_trainer.py
+
 import logging
 import torch
 import numpy as np
 
+# Core imports
 from train.trainer_base import Trainer
-from train.grpo.torch.grpo_utils import gather_kl_divergence, gather_logprobs
-from train.grpo.torch.grpo_loss import compute_advantages, grpo_loss
-from train.grpo.torch.grpo_generation import generate_single_response_and_oldlogprob
+from train.grpo.advantage_utils import compute_advantages
 from train.grpo.grpo_prepare import prepare_batch_data_for_grpo
+from train.grpo.torch.grpo_utils import gather_kl_divergence, gather_logprobs
+from train.grpo.torch.grpo_loss import grpo_loss
+from train.grpo.torch.grpo_generation import generate_single_response_and_oldlogprob
 
 # Logging setup
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 # Optional color codes (for nicer console logs)
@@ -27,6 +29,9 @@ def color_text(text, color):
 def ensure_dict_torch(item):
     """
     Torch-specific or general logic that tries to parse raw_item into { "prompt": ... }.
+    If it's a valid dict, return it directly.
+    If it's a JSON-like string, parse it.
+    Otherwise, if it's just a prompt string, wrap in { "prompt": prompt }.
     """
     if isinstance(item, dict):
         return item
@@ -45,11 +50,10 @@ def ensure_dict_torch(item):
         return {"prompt": item}
     return None
 
-
 class GRPOTrainer(Trainer):
     """
-    GRPO Trainer for Torch, replicating MLX's approach with a shared prepare_batch_data function,
-    but refactored to perform single-pass forward computations for efficiency.
+    GRPO Trainer for Torch. Uses a single forward pass across the batch for efficiency,
+    leveraging the shared 'prepare_batch_data_for_grpo' utility.
     """
 
     def __init__(
@@ -78,10 +82,10 @@ class GRPOTrainer(Trainer):
 
     def prepare_batch_data(self, batch_questions):
         """
-        We call the shared function `prepare_batch_data_for_grpo`, providing:
-          - ensure_dict_torch
-          - a "single-response" generator lambda that calls generate_single_response_and_oldlogprob
-          - self.calculate_reward, self.G, self.verbose
+        Calls the shared 'prepare_batch_data_for_grpo' to handle:
+          - Data item dict creation (ensure_dict_torch).
+          - Single-response generation (generate_fn).
+          - Reward calculation and storing old log-probs.
         """
         def generate_fn(prompt, verbose):
             return generate_single_response_and_oldlogprob(
@@ -105,7 +109,9 @@ class GRPOTrainer(Trainer):
         if not batch_data:
             return 0.0, 0.0
 
-        # Flatten data
+        # ---------------------------
+        # Flatten the data
+        # ---------------------------
         all_responses = []
         all_old_logprobs = []
         all_rewards = []
@@ -128,8 +134,7 @@ class GRPOTrainer(Trainer):
         # ---------------------------
         # 1) Compute normalized advantages (NumPy -> Torch)
         # ---------------------------
-        # compute_advantages(...) now handles a Python list, returns a NumPy array
-        advantages_np = compute_advantages(all_rewards)  
+        advantages_np = compute_advantages(all_rewards)
         advantages = torch.tensor(advantages_np, dtype=torch.float32, device=self.device)
 
         # ---------------------------
@@ -143,29 +148,41 @@ class GRPOTrainer(Trainer):
         )
         tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
 
+        # ---------------------------
         # 3) Forward pass on current model
+        # ---------------------------
         outputs_current = self.model(**tokenized)
 
-        # 4) Forward pass on reference model (no grad needed)
+        # ---------------------------
+        # 4) Forward pass on reference model (no grad)
+        # ---------------------------
         with torch.no_grad():
             outputs_ref = self.ref_model(**tokenized)
 
+        # ---------------------------
         # 5) Gather logprobs & KL
-        logprobs_current = gather_logprobs(outputs_current.logits, tokenized["input_ids"])
+        # ---------------------------
+        logprobs_current = gather_logprobs(
+            outputs_current.logits, tokenized["input_ids"]
+        )
         kl_values = gather_kl_divergence(
             outputs_current.logits,
             outputs_ref.logits,
             tokenized["input_ids"]
         )
 
+        # ---------------------------
         # 6) Convert old logprobs to torch
+        # ---------------------------
         old_logprobs_t = torch.tensor(
             all_old_logprobs,
             dtype=torch.float32,
             device=self.device
         )
 
+        # ---------------------------
         # 7) Compute GRPO loss
+        # ---------------------------
         total_loss = grpo_loss(
             logprobs_current=logprobs_current,
             logprobs_old=old_logprobs_t,
@@ -174,12 +191,16 @@ class GRPOTrainer(Trainer):
             kl_coeff=self.kl_coeff
         )
 
+        # ---------------------------
         # 8) Backprop & step
+        # ---------------------------
         self.optimizer.zero_grad()
         total_loss.backward()
         self.optimizer.step()
 
+        # ---------------------------
         # 9) Calculate stats
+        # ---------------------------
         mean_loss = float(total_loss.item())
         mean_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 

@@ -5,17 +5,21 @@ import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
 
-# imports
+# train imports
 from train.trainer_base import Trainer
-from train.grpo.mlx.grpo_loss import single_question_loss
-from train.grpo.mlx.grpo_generation import generate_single_response_and_oldlogprob
+
+# generic grpo imports
+from train.grpo.advantage_utils import compute_advantages
 from train.grpo.grpo_prepare import prepare_batch_data_for_grpo
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+# mlx specific grpo imports
+from train.grpo.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
+from train.grpo.mlx.grpo_loss import grpo_loss
+from train.grpo.mlx.grpo_generation import generate_single_response_and_oldlogprob
+
 logger = logging.getLogger(__name__)
 
-# Optional color codes (for nicer console logs)
+# Optional color codes
 RESET = "\033[0m"
 BOLD = "\033[1m"
 GREEN = "\033[92m"
@@ -27,11 +31,6 @@ def color_text(text, color):
     return f"{color}{text}{RESET}"
 
 def ensure_dict_mlx(item):
-    """
-    Attempt to ensure 'item' is a dict. If it's already a dict, return it.
-    If it's a string that looks like JSON/dict, parse it.
-    Otherwise, raise an error.
-    """
     if isinstance(item, dict):
         return item
     if isinstance(item, str) and item.strip().startswith("{"):
@@ -43,11 +42,13 @@ def ensure_dict_mlx(item):
             pass
     raise ValueError(f"[ERROR] Unexpected non-dict item: {item}")
 
+
 class GRPOTrainer(Trainer):
     """
-    GRPO Trainer for MLX framework, now using the shared function
-    'prepare_batch_data_for_grpo' to build the 'batch_data'.
+    MLX-based GRPO Trainer that does a single forward pass per batch,
+    mirroring the Torch approach.
     """
+
     def __init__(
         self,
         model,
@@ -60,10 +61,7 @@ class GRPOTrainer(Trainer):
         device=None,
         verbose=False
     ):
-        # Call parent constructor
         super().__init__(model, tokenizer, optimizer, device=device, verbose=verbose)
-
-        # Set the reference model, reward calculation, etc.
         self.ref_model = ref_model
         self.calculate_reward = calculate_reward
         self.G = G
@@ -71,8 +69,7 @@ class GRPOTrainer(Trainer):
 
     def prepare_batch_data(self, batch_questions):
         """
-        Use the shared function, injecting MLX-specific 'ensure_dict_mlx'
-        and the single-response generator 'generate_single_response_and_oldlogprob'.
+        Shared data prep: parse each item => generate => store old_logprobs & rewards
         """
         def generate_single_fn(prompt, vb):
             return generate_single_response_and_oldlogprob(
@@ -82,7 +79,6 @@ class GRPOTrainer(Trainer):
                 verbose=vb
             )
         
-        # Prepare the batch data
         batch_data = prepare_batch_data_for_grpo(
             batch_questions=batch_questions,
             ensure_dict_fn=ensure_dict_mlx,
@@ -95,59 +91,105 @@ class GRPOTrainer(Trainer):
 
     def train_step(self, batch_data):
         """
-        Perform a GRPO update with single_question_loss across batch_data.
+        Single-pass training step: flatten all responses from 'batch_data',
+        do one forward pass on current model, one on reference model, 
+        compute GRPO loss, and apply gradients.
         """
         if not batch_data:
-            # Nothing to train on
-            return 0.0, 0.0  
-
-        def batch_closure(model_instance):
-            total_loss = 0.0
-            valid_count = 0
-
-            # Loop through each item in the batch
-            for data in batch_data:
-                # Calculate loss for this question
-                loss_val = single_question_loss(
-                    model=model_instance,
-                    ref_model=self.ref_model,
-                    tokenizer=self.tokenizer,
-                    item=data["item"],
-                    responses=data["responses"],
-                    old_logprobs=data["old_logprobs"],
-                    rewards=data["rewards"],
-                    kl_coeff=self.kl_coeff,
-                    verbose=self.verbose
-                )
-                total_loss += loss_val
-                valid_count += 1
-
-            if valid_count > 0:
-                total_loss /= valid_count
-            return total_loss
+            return 0.0, 0.0
         
-        # Compute loss & gradients
+        # 1) Flatten data
+        all_responses = []
+        all_old_logprobs = []
+        all_rewards = []
+
+        for data_item in batch_data:
+            responses = data_item["responses"]
+            old_logprobs = data_item["old_logprobs"]
+            rewards = data_item["rewards"]
+
+            if not responses:
+                continue
+
+            all_responses.extend(responses)
+            all_old_logprobs.extend(old_logprobs)
+            all_rewards.extend(rewards)
+
+        if not all_responses:
+            return 0.0, 0.0
+
+        # 2) Compute advantages (NumPy => MLX array)
+        advantages_arr = compute_advantages(all_rewards)  # shape [N] np.float32
+        advantages_m = mx.array(advantages_arr, mx.float32)
+
+        # 3) Tokenize all responses at once (we assume your tokenizer can handle batch -> B,seq)
+        #    Because MLX might not have an HF-like "batch encode" method, we do it manually:
+        #    Convert each response to tokens, store in a list-of-lists
+        all_token_ids = []
+        max_len = 0
+        for resp in all_responses:
+            tokens = self.tokenizer.encode(resp)
+            if not tokens:
+                tokens = [self.tokenizer.eos_token_id]
+            max_len = max(max_len, len(tokens))
+            all_token_ids.append(tokens)
+
+        # Now build an int32 array [B, max_len], pad with eos or 0
+        B = len(all_token_ids)
+        input_ids_np = np.zeros((B, max_len), dtype=np.uint32)  # or eos
+        eos_id = self.tokenizer.eos_token_id
+        for i, tokens in enumerate(all_token_ids):
+            length = len(tokens)
+            input_ids_np[i, :length] = tokens
+
+        # MLX array => shape [B, max_len]
+        input_ids_m = mx.array(input_ids_np, mx.uint32)
+
+        # 4) Forward pass on current model => logits shape [B, seq_len, vocab_size]
+        def batch_closure(model_instance):
+            # We'll compute the entire batch's logits
+            out_current = model_instance(input_ids_m)
+            # gather logprobs => shape [B]
+            logprobs_current = gather_logprobs(out_current, input_ids_m)
+
+            # forward ref (no grad) => gather kl => shape [B]
+            out_ref = self.ref_model(input_ids_m)
+            kl_values = gather_kl_divergence(out_current, out_ref, input_ids_m)
+
+            # convert old_logprobs => MLX
+            old_logprobs_m = mx.array(all_old_logprobs, mx.float32)
+
+            # 5) Compute GRPO loss
+            loss_val = grpo_loss(
+                logprobs_current=logprobs_current,
+                logprobs_old=old_logprobs_m,
+                advantages=advantages_m,
+                kl_divergences=kl_values,
+                clip_range=0.2,
+                kl_coeff=self.kl_coeff,
+                reduction="mean"
+            )
+            return loss_val
+
+        # 5) value_and_grad => compute loss + grads
         loss_value_and_grad = nn.value_and_grad(self.model, batch_closure)
         batch_loss, grads_dict = loss_value_and_grad(self.model)
 
-        # Evaluate gradient, then optimize
+        # 6) Apply gradients with MLX optimizer
         mx.eval(grads_dict)
         self.optimizer.update(self.model, grads_dict)
 
-        # Compute final batch reward
-        all_rewards = []
-        for d in batch_data:
-            all_rewards.extend(d["rewards"])
-        final_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
+        # 7) Stats
+        mean_loss = float(batch_loss)
+        mean_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 
-        # Log batch info
+        # Logging
         logger.info(color_text(
-            f"\n[GRPO MLX] Single Batch Update => Loss: {batch_loss:.4f}, "
-            f"Mean Reward: {final_reward:.4f}\n",
+            f"\n[GRPO MLX] Single Batch Update => Loss: {mean_loss:.4f}, Mean Reward: {mean_reward:.4f}\n",
             YELLOW
         ))
 
-        return float(batch_loss), final_reward
+        return mean_loss, mean_reward
 
     def on_batch_end(self, epoch, batch_idx, loss, reward):
         logger.info(color_text(

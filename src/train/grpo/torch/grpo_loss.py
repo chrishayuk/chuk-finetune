@@ -1,25 +1,5 @@
 # src/train/grpo/torch/grpo_loss.py
-import numpy as np
 import torch
-import torch.nn.functional as F
-
-def compute_advantages(rewards, eps=1e-8):
-    """
-    Normalizes the input rewards by subtracting the mean and dividing by the standard deviation.
-    Accepts a Python list or a NumPy array.
-    Returns a NumPy array.
-    """
-    # Ensure we have a NumPy array
-    rewards = np.array(rewards, dtype=np.float32)
-
-    mean = rewards.mean()
-    raw_std = rewards.std()
-    
-    if raw_std < eps:
-        return np.zeros_like(rewards, dtype=np.float32)
-    else:
-        return (rewards - mean) / (raw_std + eps)
-
 
 def grpo_loss(
     logprobs_current: torch.Tensor,

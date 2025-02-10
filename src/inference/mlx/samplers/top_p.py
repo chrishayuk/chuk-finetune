@@ -58,7 +58,7 @@ def top_p_generate(
         # 8) If threshold_mask is all False, 
         #    forcibly keep the last token (highest prob in ascending order).
         sum_mask = threshold_mask.sum(axis=-1)
-        if float(sum_mask.asnumpy()[0]) == 0:
+        if float(sum_mask[0]) == 0:
             # Force last token to be included
             threshold_mask[..., -1] = True
 
@@ -68,7 +68,7 @@ def top_p_generate(
         # 10) Re-normalize
         sum_trunc = truncated_probs.sum(axis=-1, keepdims=True)
         # Convert to Python float for comparison
-        sum_value = float(sum_trunc.asnumpy()[0, 0])
+        sum_value = float(sum_trunc[0, 0])
         if sum_value < 1e-12:
             # Fallback: pick the last token in ascending order
             # (the highest-prob token). We skip sampling.
