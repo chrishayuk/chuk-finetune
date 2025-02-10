@@ -1,7 +1,7 @@
-TODO
+# TODO
 
-1) Update MLX Code
-2) Float16 vs Float32
-3) Ensure hyper parameters in train file, flow through (sampler etc)
-4) Implement SFT Trainer
-5) Longish train to test adaptors
+1) Print for user information
+1) Float16 vs Float32
+2) Ensure hyper parameters in train file, flow through (sampler etc)
+3) Implement SFT Trainer
+4) Longish train to test adaptors

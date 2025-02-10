@@ -3,7 +3,7 @@ import logging
 
 # imports
 from cli.train.logger_config import YELLOW, GREEN, color_text
-from train.trainer_events import TrainerEvent  # or wherever your event model is defined
+from train.trainer_events import TrainerEvent
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,12 @@ def monitor_training_progress(gen) -> (float, float):
     for event in gen:
         # event is a TrainerEvent
         if event.event_type == "epoch_start":
-            logger.info(f"\n--- Starting epoch {event.epoch} ---")
+            print(f"\n--- Starting epoch {event.epoch} ---")
 
         elif event.event_type == "batch_end":
             # event.batch, event.batch_loss, event.batch_reward
             if event.batch_loss is not None:
-                logger.info(color_text(
+                print(color_text(
                     f"Batch {event.batch} ended => loss={event.batch_loss:.4f}",
                     YELLOW
                 ))
@@ -37,7 +37,7 @@ def monitor_training_progress(gen) -> (float, float):
         elif event.event_type == "epoch_end":
             # event.epoch, event.epoch_loss, event.epoch_reward
             epoch_loss = event.epoch_loss or 0.0
-            logger.info(color_text(
+            print(color_text(
                 f"=== Finished epoch {event.epoch} => mean_loss={epoch_loss:.4f}",
                 GREEN
             ))
@@ -46,7 +46,7 @@ def monitor_training_progress(gen) -> (float, float):
             # event.mean_loss, event.mean_reward
             final_mean_loss = event.mean_loss or 0.0
             final_mean_reward = event.mean_reward or 0.0
-            logger.info(color_text(
+            print(color_text(
                 f"Training complete => mean_loss={final_mean_loss:.4f}, "
                 f"mean_reward={final_mean_reward:.4f}",
                 GREEN
