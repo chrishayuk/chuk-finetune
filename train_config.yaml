@@ -1,0 +1,35 @@
+# train_config.yaml
+models:
+  base_model: "Qwen/Qwen2.5-3B"
+  device: "mps"
+
+training:
+  load_adapter_path: null
+  save_adapter_path: null
+  verbose: true
+
+# Global generation params that apply to all stages unless overridden
+generation:
+  max_new_tokens: 256
+  stop_sequences:
+    - "User:"
+    - "System:"
+    - "<|endoftext|>"
+
+stages:
+  - name: "stage1"
+    method: "grpo"
+    lr: 1e-5
+    epochs: 5
+    batch_size: 2
+    G: 4
+
+    dataset:
+      path: "dataset/zero/verifier_samples_very_easy.jsonl"
+      template: "src/cli/train/templates/prompt_template.jinja2"
+
+    # Stage-specific generation settings
+    generation:
+      sampler: "top_p"
+      temperature: 0.6
+      top_p: 0.95
