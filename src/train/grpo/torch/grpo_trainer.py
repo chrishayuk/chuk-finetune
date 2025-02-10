@@ -1,3 +1,4 @@
+# src/train/grpo/torch/grpo_trainer.py
 import logging
 import torch
 import numpy as np
@@ -47,7 +48,8 @@ def ensure_dict_torch(item):
 
 class GRPOTrainer(Trainer):
     """
-    GRPO Trainer for Torch, replicating MLX's approach with a shared prepare_batch_data function.
+    GRPO Trainer for Torch, replicating MLX's approach with a shared prepare_batch_data function,
+    but refactored to perform single-pass forward computations for efficiency.
     """
 
     def __init__(
@@ -68,6 +70,7 @@ class GRPOTrainer(Trainer):
         self.G = G
         self.kl_coeff = kl_coeff
 
+        # Set the device
         if self.device is None:
             self.device = torch.device("cpu")
         self.model.to(self.device)
@@ -77,12 +80,10 @@ class GRPOTrainer(Trainer):
         """
         We call the shared function `prepare_batch_data_for_grpo`, providing:
           - ensure_dict_torch
-          - a "single-response" generator lambda that calls generate_single_response_and_oldlogprob.
+          - a "single-response" generator lambda that calls generate_single_response_and_oldlogprob
           - self.calculate_reward, self.G, self.verbose
         """
-        # define a small local or lambda function that calls your Torch generation utility
         def generate_fn(prompt, verbose):
-            # returns (resp_text, sum_lp)
             return generate_single_response_and_oldlogprob(
                 model=self.model,
                 tokenizer=self.tokenizer,
@@ -90,7 +91,6 @@ class GRPOTrainer(Trainer):
                 verbose=verbose
             )
         
-        # prepare the batch data
         batch_data = prepare_batch_data_for_grpo(
             batch_questions=batch_questions,
             ensure_dict_fn=ensure_dict_torch,
@@ -99,78 +99,88 @@ class GRPOTrainer(Trainer):
             G=self.G,
             verbose=self.verbose
         )
-
-        # return the batch data
         return batch_data
-
+    
     def train_step(self, batch_data):
-        """
-        For each item => re-compute new logprobs & KL, do GRPO loss => single backward
-        """
         if not batch_data:
             return 0.0, 0.0
 
-        total_loss = 0.0
-        valid_count = 0
+        # Flatten data
+        all_responses = []
+        all_old_logprobs = []
         all_rewards = []
-
-        self.optimizer.zero_grad()
 
         for data_item in batch_data:
             responses = data_item["responses"]
             old_logprobs = data_item["old_logprobs"]
             rewards = data_item["rewards"]
-            all_rewards.extend(rewards)
 
             if not responses:
                 continue
 
-            # 1) Compute advantage
-            adv_arr = compute_advantages(rewards)  # shape [G]
-            current_logprobs = []
-            kl_values = []
+            all_responses.extend(responses)
+            all_old_logprobs.extend(old_logprobs)
+            all_rewards.extend(rewards)
 
-            # 2) Recompute new logprobs & KL for each response
-            for resp in responses:
-                tokenized_resp = self.tokenizer(resp, return_tensors="pt")
-                resp_inputs = {k: v.to(self.device) for k, v in tokenized_resp.items()}
+        if not all_responses:
+            return 0.0, 0.0
 
-                out_current = self.model(**resp_inputs)
-                current_lp = gather_logprobs(out_current.logits, resp_inputs["input_ids"])
-                current_logprobs.append(current_lp)
+        # ---------------------------
+        # 1) Compute normalized advantages (NumPy -> Torch)
+        # ---------------------------
+        # compute_advantages(...) now handles a Python list, returns a NumPy array
+        advantages_np = compute_advantages(all_rewards)  
+        advantages = torch.tensor(advantages_np, dtype=torch.float32, device=self.device)
 
-                with torch.no_grad():
-                    out_ref = self.ref_model(**resp_inputs)
-                    kl_val = gather_kl_divergence(
-                        out_current.logits, out_ref.logits, resp_inputs["input_ids"]
-                    )
-                kl_values.append(kl_val)
+        # ---------------------------
+        # 2) Tokenize all responses at once
+        # ---------------------------
+        tokenized = self.tokenizer(
+            all_responses,
+            return_tensors="pt",
+            padding=True,
+            truncation=True
+        )
+        tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
 
-            logprobs_current_sums = torch.cat(current_logprobs, dim=0)
-            kl_sums = torch.cat(kl_values, dim=0)
-            old_sums_t = torch.tensor(old_logprobs, dtype=torch.float32, device=self.device)
-            adv_t = torch.tensor(adv_arr, dtype=torch.float32, device=self.device)
+        # 3) Forward pass on current model
+        outputs_current = self.model(**tokenized)
 
-            # 3) GRPO loss
-            item_loss = grpo_loss(
-                logprobs_current=logprobs_current_sums,
-                logprobs_old=old_sums_t,
-                advantages=adv_t,
-                kl_divergences=kl_sums,
-                kl_coeff=self.kl_coeff
-            )
+        # 4) Forward pass on reference model (no grad needed)
+        with torch.no_grad():
+            outputs_ref = self.ref_model(**tokenized)
 
-            total_loss += item_loss
-            valid_count += 1
+        # 5) Gather logprobs & KL
+        logprobs_current = gather_logprobs(outputs_current.logits, tokenized["input_ids"])
+        kl_values = gather_kl_divergence(
+            outputs_current.logits,
+            outputs_ref.logits,
+            tokenized["input_ids"]
+        )
 
-        if valid_count > 0:
-            total_loss /= valid_count
+        # 6) Convert old logprobs to torch
+        old_logprobs_t = torch.tensor(
+            all_old_logprobs,
+            dtype=torch.float32,
+            device=self.device
+        )
 
+        # 7) Compute GRPO loss
+        total_loss = grpo_loss(
+            logprobs_current=logprobs_current,
+            logprobs_old=old_logprobs_t,
+            advantages=advantages,
+            kl_divergences=kl_values,
+            kl_coeff=self.kl_coeff
+        )
+
+        # 8) Backprop & step
+        self.optimizer.zero_grad()
         total_loss.backward()
         self.optimizer.step()
 
+        # 9) Calculate stats
         mean_loss = float(total_loss.item())
-        import numpy as np
         mean_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 
         return mean_loss, mean_reward

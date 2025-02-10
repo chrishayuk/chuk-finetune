@@ -19,7 +19,7 @@ generation:
 stages:
   - name: "stage1"
     method: "grpo"
-    lr: 1e-5
+    lr: 1e-6
     epochs: 5
     batch_size: 2
     G: 4
