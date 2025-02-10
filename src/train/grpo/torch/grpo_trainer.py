@@ -54,6 +54,10 @@ class GRPOTrainer(Trainer):
     """
     GRPO Trainer for Torch. Uses a single forward pass across the batch for efficiency,
     leveraging the shared 'prepare_batch_data_for_grpo' utility.
+
+    'self.model' is the *current* model (being updated).
+    'self.ref_model' is the *frozen* or old policy used to generate samples and 
+    compute KL reference.
     """
 
     def __init__(
@@ -83,13 +87,14 @@ class GRPOTrainer(Trainer):
     def prepare_batch_data(self, batch_questions):
         """
         Calls the shared 'prepare_batch_data_for_grpo' to handle:
-          - Data item dict creation (ensure_dict_torch).
-          - Single-response generation (generate_fn).
-          - Reward calculation and storing old log-probs.
+          - Data item dict creation (ensure_dict_torch)
+          - Single-response generation from the REF model (frozen policy)
+          - Reward calculation and storing old log-probs
         """
         def generate_fn(prompt, verbose):
+            # *** Using ref_model to generate => sampling from the old/frozen policy. ***
             return generate_single_response_and_oldlogprob(
-                model=self.model,
+                ref_model=self.ref_model,      # <<--- KEY CHANGE
                 tokenizer=self.tokenizer,
                 prompt=prompt,
                 verbose=verbose
@@ -110,7 +115,7 @@ class GRPOTrainer(Trainer):
             return 0.0, 0.0
 
         # ---------------------------
-        # Flatten the data
+        # Flatten data
         # ---------------------------
         all_responses = []
         all_old_logprobs = []
@@ -162,9 +167,7 @@ class GRPOTrainer(Trainer):
         # ---------------------------
         # 5) Gather logprobs & KL
         # ---------------------------
-        logprobs_current = gather_logprobs(
-            outputs_current.logits, tokenized["input_ids"]
-        )
+        logprobs_current = gather_logprobs(outputs_current.logits, tokenized["input_ids"])
         kl_values = gather_kl_divergence(
             outputs_current.logits,
             outputs_ref.logits,
@@ -174,11 +177,7 @@ class GRPOTrainer(Trainer):
         # ---------------------------
         # 6) Convert old logprobs to torch
         # ---------------------------
-        old_logprobs_t = torch.tensor(
-            all_old_logprobs,
-            dtype=torch.float32,
-            device=self.device
-        )
+        old_logprobs_t = torch.tensor(all_old_logprobs, dtype=torch.float32, device=self.device)
 
         # ---------------------------
         # 7) Compute GRPO loss

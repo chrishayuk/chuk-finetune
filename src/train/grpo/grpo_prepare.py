@@ -1,5 +1,9 @@
 # src/train/grpo/grpo_prepare.py
+import logging
 from typing import Any, Dict, Callable, List, Optional, Tuple
+
+# Logging setup
+logger = logging.getLogger(__name__)
 
 def prepare_batch_data_for_grpo(
     batch_questions: List[Any],

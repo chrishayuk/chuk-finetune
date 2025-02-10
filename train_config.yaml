@@ -1,4 +1,5 @@
 # train_config.yaml
+
 models:
   base_model: "Qwen/Qwen2.5-3B"
   device: "mps"
@@ -33,3 +34,9 @@ stages:
       sampler: "top_p"
       temperature: 0.6
       top_p: 0.95
+
+    # Block-sync + checkpoint options
+    sync_every_n_batches: 50         # Refresh reference model after 50 mini-batches
+    checkpoint_dir: "checkpoints/"   # Directory to save checkpoints
+    checkpoint_every_n_batches: 100  # Save a checkpoint every 100 batches
+    checkpoint_every_n_epochs: 1     # Also save a checkpoint at the end of each epoch

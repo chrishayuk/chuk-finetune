@@ -1,18 +1,19 @@
 # src/train/grpo/mlx/grpo_trainer.py
+
 import ast
 import logging
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
 
-# train imports
+# Train imports
 from train.trainer_base import Trainer
 
-# generic grpo imports
+# Generic GRPO imports
 from train.grpo.advantage_utils import compute_advantages
 from train.grpo.grpo_prepare import prepare_batch_data_for_grpo
 
-# mlx specific grpo imports
+# MLX-specific GRPO imports
 from train.grpo.mlx.grpo_utils import gather_logprobs, gather_kl_divergence
 from train.grpo.mlx.grpo_loss import grpo_loss
 from train.grpo.mlx.grpo_generation import generate_single_response_and_oldlogprob
@@ -47,6 +48,9 @@ class GRPOTrainer(Trainer):
     """
     MLX-based GRPO Trainer that does a single forward pass per batch,
     mirroring the Torch approach.
+
+    'self.model' is the *current* model being trained.
+    'self.ref_model' is the *frozen/old* model used for sampling and KL reference.
     """
 
     def __init__(
@@ -69,11 +73,12 @@ class GRPOTrainer(Trainer):
 
     def prepare_batch_data(self, batch_questions):
         """
-        Shared data prep: parse each item => generate => store old_logprobs & rewards
+        Data prep: parse each item => generate => store old_logprobs & rewards.
+        NOTE: We now generate from 'self.ref_model' to match strict GRPO sampling from the old policy.
         """
         def generate_single_fn(prompt, vb):
             return generate_single_response_and_oldlogprob(
-                model=self.model,
+                ref_model=self.ref_model,
                 tokenizer=self.tokenizer,
                 prompt=prompt,
                 verbose=vb
@@ -91,9 +96,11 @@ class GRPOTrainer(Trainer):
 
     def train_step(self, batch_data):
         """
-        Single-pass training step: flatten all responses from 'batch_data',
-        do one forward pass on current model, one on reference model, 
-        compute GRPO loss, and apply gradients.
+        Single-pass training step:
+          1) Flatten responses & rewards from batch_data
+          2) Convert them into MLX format
+          3) Forward pass (current model + ref_model) for log-probs & KL
+          4) Compute GRPO loss, apply gradients
         """
         if not batch_data:
             return 0.0, 0.0
@@ -118,13 +125,11 @@ class GRPOTrainer(Trainer):
         if not all_responses:
             return 0.0, 0.0
 
-        # 2) Compute advantages (NumPy => MLX array)
-        advantages_arr = compute_advantages(all_rewards)  # shape [N] np.float32
+        # 2) Compute advantages (NumPy => MLX)
+        advantages_arr = compute_advantages(all_rewards)  # shape [N]
         advantages_m = mx.array(advantages_arr, mx.float32)
 
-        # 3) Tokenize all responses at once (we assume your tokenizer can handle batch -> B,seq)
-        #    Because MLX might not have an HF-like "batch encode" method, we do it manually:
-        #    Convert each response to tokens, store in a list-of-lists
+        # 3) Tokenize all responses at once
         all_token_ids = []
         max_len = 0
         for resp in all_responses:
@@ -134,32 +139,27 @@ class GRPOTrainer(Trainer):
             max_len = max(max_len, len(tokens))
             all_token_ids.append(tokens)
 
-        # Now build an int32 array [B, max_len], pad with eos or 0
         B = len(all_token_ids)
-        input_ids_np = np.zeros((B, max_len), dtype=np.uint32)  # or eos
-        eos_id = self.tokenizer.eos_token_id
+        input_ids_np = np.zeros((B, max_len), dtype=np.uint32)
         for i, tokens in enumerate(all_token_ids):
-            length = len(tokens)
-            input_ids_np[i, :length] = tokens
+            input_ids_np[i, :len(tokens)] = tokens
 
-        # MLX array => shape [B, max_len]
-        input_ids_m = mx.array(input_ids_np, mx.uint32)
+        input_ids_m = mx.array(input_ids_np, mx.uint32)  # shape [B, max_len]
 
-        # 4) Forward pass on current model => logits shape [B, seq_len, vocab_size]
+        # 4) The closure that computes GRPO loss
         def batch_closure(model_instance):
-            # We'll compute the entire batch's logits
-            out_current = model_instance(input_ids_m)
-            # gather logprobs => shape [B]
-            logprobs_current = gather_logprobs(out_current, input_ids_m)
+            # Forward pass on current model => logprobs_current
+            out_current = model_instance(input_ids_m)  # [B, seq_len, vocab_size]
+            logprobs_current = gather_logprobs(out_current, input_ids_m)  # [B]
 
-            # forward ref (no grad) => gather kl => shape [B]
-            out_ref = self.ref_model(input_ids_m)
-            kl_values = gather_kl_divergence(out_current, out_ref, input_ids_m)
+            # Forward pass on ref_model => kl
+            out_ref = self.ref_model(input_ids_m)      # [B, seq_len, vocab_size]
+            kl_values = gather_kl_divergence(out_current, out_ref, input_ids_m)  # [B]
 
-            # convert old_logprobs => MLX
+            # Convert old logprobs => MLX
             old_logprobs_m = mx.array(all_old_logprobs, mx.float32)
 
-            # 5) Compute GRPO loss
+            # GRPO loss
             loss_val = grpo_loss(
                 logprobs_current=logprobs_current,
                 logprobs_old=old_logprobs_m,
@@ -175,7 +175,7 @@ class GRPOTrainer(Trainer):
         loss_value_and_grad = nn.value_and_grad(self.model, batch_closure)
         batch_loss, grads_dict = loss_value_and_grad(self.model)
 
-        # 6) Apply gradients with MLX optimizer
+        # 6) Apply gradients
         mx.eval(grads_dict)
         self.optimizer.update(self.model, grads_dict)
 
@@ -183,12 +183,10 @@ class GRPOTrainer(Trainer):
         mean_loss = float(batch_loss)
         mean_reward = float(np.mean(all_rewards)) if all_rewards else 0.0
 
-        # Logging
         logger.info(color_text(
             f"\n[GRPO MLX] Single Batch Update => Loss: {mean_loss:.4f}, Mean Reward: {mean_reward:.4f}\n",
             YELLOW
         ))
-
         return mean_loss, mean_reward
 
     def on_batch_end(self, epoch, batch_idx, loss, reward):
