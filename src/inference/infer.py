@@ -107,6 +107,7 @@ def _run_single_inference(
     """
     if is_mlx:
         # mlx
+        #from inference.mlx.mlx_chat_generation_native import mlx_chat_generation
         from inference.mlx.mlx_chat_generation import mlx_chat_generation
 
         # MLX chat generation

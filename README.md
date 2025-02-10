@@ -5,7 +5,7 @@ The following gives a brief explanation on how to use inference
 If you wish to chat with a model through the interactive chat, you can run the following comman
 
 ```bash
-uv run inference-cli --chat --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device cpu
+uv run inference-cli --chat --model_name "Qwen/Qwen2.5-1.5B-instruct" --max_new_tokens 256 --device mlx
 ```
 
 uv run inference-cli --model_name "Qwen/Qwen2.5-3B-instruct" --max_new_tokens 256 --device cpu --load_adapter_path "adapters/math" --prompt "what's 25 + 30"

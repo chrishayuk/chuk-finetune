@@ -5,11 +5,17 @@ import sys
 import os  # <-- needed for checking file existence
 import logging
 
+# cli
 from cli.inference.arg_parser import parse_arguments
+
+# model
 from model.model_loader import load_model_and_tokenizer
-from model.adapters import load_adapters  # <-- import adapter function
+from model.adapters import load_adapters
+
+# inference
 from inference.infer import run_inference
 
+# logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
