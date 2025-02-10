@@ -24,3 +24,6 @@ where = ["src"]
 
 [project.scripts]
 inference-cli = "cli.inference.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

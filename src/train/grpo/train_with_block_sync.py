@@ -3,10 +3,13 @@
 import logging
 import os
 from typing import Any, List
-
 from train.dataset_loader import get_dataloader
 from train.grpo.grpo_trainer import train_grpo
-from model.checkpoints import save_checkpoint  # if you have checkpoint logic
+from model.checkpoints import save_checkpoint
+
+# NEW IMPORTS:
+from model.copy_weights import copy_weights
+from model.model_detection import is_torch_model
 
 logger = logging.getLogger(__name__)
 
@@ -35,37 +38,7 @@ def train_grpo_block_sync(
     syncing base_model -> ref_model every `sync_every_n_batches`.
     Also calls a data_loader function properly (we call the returned function),
     avoiding the 'function' object not iterable error.
-
-    1) We iterate over `total_epochs`.
-    2) For each epoch, we build a data-iterator function from get_dataloader(...).
-       Then we call 'data_iter_fn()' to get the actual mini-batches.
-    3) For each mini-batch, we call `train_grpo(...)` with `epochs=1`, 
-       effectively training on just that batch, then move on.
-    4) After `sync_every_n_batches` mini-batches, we copy the updated base_model 
-       into ref_model. 
-    5) Optionally, we can checkpoint the model if checkpoint params are given.
-
-    :param base_model: The main (trainable) policy model.
-    :param ref_model:  The frozen reference model (synced every n batches).
-    :param tokenizer:  A tokenizer for both models.
-    :param dataset:    A list or dataset object of training items.
-    :param calculate_reward: function(response_text, item) -> (reward, feedback)
-    :param lr:         Learning rate for the optimizer.
-    :param total_epochs: How many epochs to run overall.
-    :param batch_size:  Batch size to feed into data loader.
-    :param G:          Number of responses to generate per prompt (GRPO param).
-    :param device:      "cpu", "cuda", "mlx", etc.
-    :param verbose:     If True, enable verbose logs in the trainer.
-    :param kl_coeff:    KL penalty coefficient for GRPO.
-    :param sync_every_n_batches: After how many mini-batches we update ref_model.
-    :param shuffle:     Whether to shuffle the dataset each epoch.
-    :param checkpoint_dir: Directory to save checkpoints, or None to disable.
-    :param checkpoint_every_n_batches: If set, checkpoint every N mini-batches.
-    :param checkpoint_every_n_epochs:  If set, checkpoint every N epochs.
-
-    :return: (final_mean_loss, final_mean_reward)
     """
-
     total_batches_processed = 0
     final_mean_loss, final_mean_reward = 0.0, 0.0
 
@@ -85,19 +58,18 @@ def train_grpo_block_sync(
 
         # 1) Build the data-loader function
         data_iter_fn = get_dataloader("torch", dataset, batch_size, shuffle=shuffle)
-        # 'data_iter_fn' is now a function that we must call -> data_iter_fn()
-        # to actually get a generator of batches.
 
         # 2) Sync the reference model at the start of the epoch
         logger.info("[Sync] Copy base_model -> ref_model at epoch start.")
-        ref_model.load_state_dict(base_model.state_dict())
-        ref_model.eval()
+        copy_weights(base_model, ref_model, strict=False)
+        if is_torch_model(ref_model):
+            ref_model.eval()
 
         block_batch_count = 0
         batch_idx = 0
 
         # 3) Actually call data_iter_fn(...) with or without a batch_size override
-        for batch_items in data_iter_fn():  
+        for batch_items in data_iter_fn():
             batch_idx += 1
 
             # 3.1) Train on this single batch => "epochs=1"
@@ -123,8 +95,9 @@ def train_grpo_block_sync(
             # Block sync
             if block_batch_count >= sync_every_n_batches:
                 logger.info(f"[Sync] Refreshing ref_model after {block_batch_count} batches.")
-                ref_model.load_state_dict(base_model.state_dict())
-                ref_model.eval()
+                copy_weights(base_model, ref_model, strict=True)
+                if is_torch_model(ref_model):
+                    ref_model.eval()
                 block_batch_count = 0
 
             # Possibly checkpoint after N mini-batches

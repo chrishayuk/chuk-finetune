@@ -71,50 +71,47 @@ def grpo_loss(
     reduction="mean"
 ):
     """
-    GRPO/PPO-style objective with ratio clipping + KL penalty.
+    GRPO/PPO-style objective with ratio clipping + KL penalty + safe ratio clamp.
 
-    Objective:
-        L = - E[ min(r * A, clip(r, 1-ε, 1+ε) * A ) ] + kl_coeff * KL
+    Objective (per sample):
+      L = - min( r * A, clip(r, 1-ε, 1+ε) * A ) + kl_coeff * KL
 
-    Where:
-      - r = exp(logπ_new - logπ_old)
-      - A = advantage
-      - KL = per-sample KL divergence with the reference policy
+    Where r = exp( clamp(logπ_new - logπ_old, -10, 10) ).
+    Clamping the difference in [-10, 10] helps avoid exp overflow => NaNs.
 
     :param logprobs_current: shape [N], log π_new for each sample
-    :param logprobs_old: shape [N], log π_old for each sample
-    :param advantages: shape [N], advantage values
-    :param kl_divergences: shape [N], KL per sample
-    :param clip_range: float, PPO clipping parameter
-    :param kl_coeff: float, weighting for KL divergence
-    :param reduction: 'mean', 'sum', or 'none'
+    :param logprobs_old:     shape [N], log π_old for each sample
+    :param advantages:       shape [N], advantage values
+    :param kl_divergences:   shape [N], KL per sample
+    :param clip_range:       float, PPO clipping parameter (epsilon)
+    :param kl_coeff:         float, weighting for KL divergence
+    :param reduction:        'mean', 'sum', or 'none'
     :return: scalar (if 'mean' or 'sum') or per-sample if 'none'
     """
-    # ratio = exp(logπ_new - logπ_old)
-    ratios = mx.exp(logprobs_current - logprobs_old)  # shape [N]
+    # 1) Safely clamp the difference for stable exponentiation
+    diff = mx.minimum(mx.maximum(logprobs_current - logprobs_old, -10.0), 10.0)
+    ratios = mx.exp(diff)  # shape [N]
 
-    # Surrogate
+    # 2) PPO clipped surrogate
     surr1 = ratios * advantages
-    # clamp(ratios, 1-clip, 1+clip)
     ratios_clamped = mx.minimum(mx.maximum(ratios, 1.0 - clip_range), 1.0 + clip_range)
     surr2 = ratios_clamped * advantages
 
-    # Negative sign => we want to maximize => we minimize the negative
+    # negative => maximizing => we minimize negative
     clipped_surrogate = -mx.minimum(surr1, surr2)
 
-    # KL penalty term
+    # 3) KL penalty
     kl_term = kl_coeff * kl_divergences
 
-    # Combined loss per sample
+    # 4) Combine
     loss = clipped_surrogate + kl_term  # shape [N]
 
-    # Reduction
+    # 5) Reduction
     if reduction == "mean":
         return mx.mean(loss)
     elif reduction == "sum":
         return mx.sum(loss)
     else:
-        # 'none' => return the vector of per-sample losses
         return loss
 
 
@@ -134,7 +131,7 @@ def compute_grpo_loss(
       1) Normalizes 'rewards' => advantages via shared NumPy-based utility.
       2) For each response, compute new logprobs & KL vs. reference model.
       3) Computes the GRPO loss by comparing old vs. current logprobs,
-         factoring in the KL penalty.
+         factoring in the KL penalty, returning a single (mean) scalar.
 
     :param model: MLX model (current policy).
     :param ref_model: MLX model (reference/old policy).
@@ -177,7 +174,7 @@ def compute_grpo_loss(
     old_sums = mx.array(old_logprobs, mx.float32)  
     advantages_m = mx.array(advantages_arr, mx.float32)
 
-    # 3) Compute final GRPO loss (mean over samples)
+    # 3) Compute final GRPO loss (mean over samples), with safe ratio clamp
     loss_val = grpo_loss(
         logprobs_current=logprobs_current_sums,
         logprobs_old=old_sums,
