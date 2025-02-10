@@ -4,7 +4,8 @@ import pytest
 import torch
 import numpy as np
 
-from src.train.grpo.torch.grpo_utils import gather_logprobs, gather_kl_divergence
+from train.grpo.torch.grpo_utils import gather_logprobs, gather_kl_divergence
+
 
 def test_gather_logprobs_small():
     """
@@ -15,18 +16,19 @@ def test_gather_logprobs_small():
         [ 2.0,  1.0,  0.0, -1.0, -2.0],
         [ 0.0,  0.5,  1.5, -0.5,  2.0],
         [ 0.1,  0.2,  0.3,  0.4,  0.5]
-    ]], dtype=torch.float32)  # shape [1,3,5]
+    ]], dtype=torch.float32)  # shape [1, 3, 5]
 
-    # input IDs shape [3]
-    input_ids_data = torch.tensor([0, 2, 4], dtype=torch.long)  # e.g. the chosen tokens
+    # input_ids shape [1, 3] (batch_size=1, seq_len=3)
+    input_ids_data = torch.tensor([[0, 2, 4]], dtype=torch.long)
 
     # Call gather_logprobs
     sum_logprob = gather_logprobs(logits_data, input_ids_data)
-    
+
     # The function should return shape [1]
     assert sum_logprob.shape == (1,), f"Expected shape [1], got {sum_logprob.shape}"
     val = sum_logprob.item()
     assert np.isfinite(val), "Output logprob sum is not finite"
+
 
 def test_gather_kl_divergence_small():
     """
@@ -42,13 +44,14 @@ def test_gather_kl_divergence_small():
         [ 1.0,  1.0,  1.0,  1.0]
     ]], dtype=torch.float32)
 
-    # input_ids => shape [2]
-    input_ids_data = torch.tensor([3, 1], dtype=torch.long)
+    # input_ids shape [1, 2]
+    input_ids_data = torch.tensor([[3, 1]], dtype=torch.long)
 
     kl_val = gather_kl_divergence(current_data, ref_data, input_ids_data)
     assert kl_val.shape == (1,), f"Expected shape [1], got {kl_val.shape}"
     kl_val_f = kl_val.item()
     assert np.isfinite(kl_val_f), "KL must be finite."
+
 
 def test_gather_logprobs_random():
     """
@@ -57,19 +60,21 @@ def test_gather_logprobs_random():
     batch_size = 1
     seq_len = 4
     vocab_size = 6
-    # create random logits
+
     rng = np.random.default_rng(12345)
+    # create random logits => shape [1, 4, 6]
     logits_np = rng.normal(loc=0.0, scale=1.0, size=(batch_size, seq_len, vocab_size)).astype(np.float32)
     logits_t = torch.tensor(logits_np)
 
-    # create random input_ids in [0,vocab_size)
-    input_ids_np = rng.integers(low=0, high=vocab_size, size=seq_len, dtype=np.int64)
+    # create random input_ids => shape [1, 4]
+    input_ids_np = rng.integers(low=0, high=vocab_size, size=(batch_size, seq_len), dtype=np.int64)
     input_ids_t = torch.tensor(input_ids_np, dtype=torch.long)
 
     sum_lp = gather_logprobs(logits_t, input_ids_t)
     assert sum_lp.shape == (1,)
     val = sum_lp.item()
     assert np.isfinite(val), "sum of log-probs is not finite"
+
 
 def test_gather_kl_divergence_random():
     """
@@ -86,8 +91,8 @@ def test_gather_kl_divergence_random():
     current_t = torch.tensor(current_np)
     ref_t     = torch.tensor(ref_np)
 
-    # random input_ids
-    input_ids_np = rng.integers(low=0, high=vocab_size, size=seq_len)
+    # random input_ids => shape [1, 3]
+    input_ids_np = rng.integers(low=0, high=vocab_size, size=(batch_size, seq_len), dtype=np.int64)
     input_ids_t = torch.tensor(input_ids_np, dtype=torch.long)
 
     kl_val = gather_kl_divergence(current_t, ref_t, input_ids_t)

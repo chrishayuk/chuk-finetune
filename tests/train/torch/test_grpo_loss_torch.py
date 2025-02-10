@@ -4,8 +4,8 @@ import pytest
 import numpy as np
 import torch
 
-from src.train.grpo.torch.grpo_loss import compute_advantages as torch_compute_advantages
-from src.train.grpo.torch.grpo_loss import grpo_loss as torch_grpo_loss
+from train.grpo.advantage_utils import compute_advantages
+from train.grpo.torch.grpo_loss import grpo_loss as torch_grpo_loss
 
 @pytest.mark.parametrize("rewards", [
     [1.0, 2.0, 3.0],
@@ -13,8 +13,8 @@ from src.train.grpo.torch.grpo_loss import grpo_loss as torch_grpo_loss
     [10.0, 10.0, 10.0],  # All same
     np.random.randn(5).tolist(),
 ])
-def test_compute_advantages_torch(rewards):
-    advantages = torch_compute_advantages(rewards)
+def test_compute_advantages(rewards):
+    advantages = compute_advantages(rewards)
     assert len(advantages) == len(rewards)
 
     # If rewards are all identical, the normalised result is all zeros => std=0
