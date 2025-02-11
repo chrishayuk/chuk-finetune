@@ -57,7 +57,7 @@ def train_grpo_block_sync(
         logger.info(f"\n=== Starting Epoch {epoch}/{total_epochs} ===")
 
         # 1) Build the data-loader function
-        data_iter_fn = get_dataloader("torch", dataset, batch_size, shuffle=shuffle)
+        data_iter_fn = get_dataloader(device, dataset, batch_size, shuffle=shuffle)
 
         # 2) Sync the reference model at the start of the epoch
         logger.info("[Sync] Copy base_model -> ref_model at epoch start.")
