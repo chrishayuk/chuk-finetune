@@ -1,4 +1,4 @@
-{"prompt": "Explain 2+2 step by step."}
+{"prompt": "Work out 62 - 97 and display the answer", "verifiers": [{"name": "reasoning_format_with_verifier_answer", "url": "https://verifiers-weathered-glitter-8347.fly.dev"}, {"name": "verifier_answer", "url": "https://verifiers-weathered-glitter-8347.fly.dev", "args": {"gold_solution": "-35"}}]}
 {"prompt": "Write a short poem about nature."}
 {"no_prompt": "This item lacks a prompt and will be skipped."}
 {"prompt": "Summarize the plot of a famous novel."}
