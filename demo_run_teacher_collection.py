@@ -1,80 +1,140 @@
 #!/usr/bin/env python
 """
-demo_run_teacher_collection.py
+run_teacher_collection_cli.py
 
-A demo script that uses 'collect_teacher_data_once(...)' for a single-pass 
-teacher data collection, skipping invalid or reward=None items automatically.
+A CLI script that runs a single-pass teacher data collection pipeline.
+It:
+  - Loads the teacher model & tokenizer (via teacher_model_loader).
+  - Loads an input dataset from a JSONL file (one JSON object per line).
+  - Uses an integrated reward function (wrapping combined_calculate_reward from verifiers).
+  - Collects teacher outputs using collect_teacher_data_once().
+  - Saves the resulting dataset as a JSONL file.
 
-Key points:
-  - We optionally load the teacher model & tokenizer (if you have an actual model_loader).
-  - We define an 'integrated_reward' that calls 'combined_calculate_reward' from verifiers.
-  - We pass a mock or real 'generate_teacher_fn' to produce teacher outputs.
-
-Any item with missing 'prompt' or a reward of (None,"") is discarded.
+Any item with a missing 'prompt' or a reward of (None,"") is discarded.
 """
-# regular imports
-import logging
 
-# teacher training imports
+import argparse
+import json
+import logging
+import os
+import sys
+
+# Teacher training imports
 from train.teacher.teacher_generation import generate_single_teacher_response
 from train.teacher.teacher_model_loader import load_teacher_model
 from train.teacher.run_teacher_collection import collect_teacher_data_once
 
-# verifiers
+# Verifiers
 from verifiers.combined_reward import combined_calculate_reward
 
-# info
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-def generate_teacher_mock(prompt, verbose=False):
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Run a single-pass teacher data collection pipeline using JSONL input/output."
+    )
+    parser.add_argument(
+        "--model", type=str, required=True,
+        help="Teacher model name or path (e.g., 'Qwen/Qwen2.5-3B')."
+    )
+    parser.add_argument(
+        "--dataset", type=str, required=True,
+        help="Path to the input dataset JSONL file (one JSON object per line)."
+    )
+    parser.add_argument(
+        "--output", type=str, required=True,
+        help="Path to save the collected teacher data as a JSONL file."
+    )
+    parser.add_argument(
+        "--device", type=str, default="cpu",
+        help="Device to use ('cpu', 'cuda', 'mlx'). Default is 'cpu'."
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=2,
+        help="Mini-batch size for data collection. Default is 2."
+    )
+    parser.add_argument(
+        "--G", type=int, default=2,
+        help="Number of responses to generate per item. Default is 2."
+    )
+    return parser.parse_args()
+
+def load_dataset(dataset_path):
     """
-    A mock teacher generation function:
-      returns (prompt + " => teacher_out", logprob=1.23).
-    If you have a real teacher, replace this with actual generation code.
+    Loads a JSONL file where each line is a JSON object.
+    Returns a list of items.
     """
-    response_text = prompt + " => teacher_out"
-    if verbose:
-        print(f"[GenerateTeacher] Prompt: {prompt}\n => {response_text}")
-    return (response_text, 1.23)
+    if not os.path.exists(dataset_path):
+        logger.error(f"Dataset file {dataset_path} not found.")
+        sys.exit(1)
+    data = []
+    with open(dataset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    data.append(json.loads(line))
+                except Exception as e:
+                    logger.warning(f"Skipping invalid JSON line: {line}\nError: {e}")
+    logger.info(f"Loaded {len(data)} items from {dataset_path}.")
+    return data
+
+def save_dataset_jsonl(data, output_path):
+    """
+    Saves the collected teacher data to a JSONL file.
+    Each item is written as a separate JSON line.
+    """
+    with open(output_path, "w", encoding="utf-8") as f:
+        for item in data:
+            json_line = json.dumps(item)
+            f.write(json_line + "\n")
+    logger.info(f"Saved collected teacher data to {output_path}.")
 
 def main():
-    # set the device to mlx
-    device = "mlx"
-    teacher_model = "Qwen/Qwen2.5-3B"
+    args = parse_arguments()
 
-    # load the model
-    teacher_model, tokenizer, device = load_teacher_model(teacher_model, device_override="cpu")
+    # Load teacher model & tokenizer.
+    logger.info(f"Loading teacher model & tokenizer: {args.model}")
+    try:
+        teacher_model, tokenizer, device = load_teacher_model(args.model, device_override=args.device)
+    except RuntimeError as e:
+        logger.error("Failed to load teacher model. This may be due to a missing torchvision nms operator.")
+        logger.error("Please ensure that you have installed a version of torchvision that supports the 'nms' operator (e.g., torchvision>=0.15.1) or adjust your environment accordingly.")
+        logger.error(f"Error details: {e}")
+        sys.exit(1)
+    logger.info(f"Using device: {device}")
 
-    # A small dataset, with one item that might be skipped by the reward:
-    dataset = [
-        {"prompt": "Explain 2+2 step by step."},
-        {"prompt": "Write a short poem."},
-        {"no_prompt_here": "invalid item => skip inline"},
-    ]
+    # Load dataset from JSONL file.
+    dataset = load_dataset(args.dataset)
 
-    # Single-pass data collection
+    # Define integrated reward function (wrapping combined_calculate_reward).
+    def integrated_reward(response_text, item):
+        # For debugging, you might log the reward here.
+        score, feedback = combined_calculate_reward(response_text, item)
+        logger.info(f"Reward for response '{response_text}' on item '{item}': score={score}, feedback={feedback}")
+        return score, feedback
+
+    # Run single-pass teacher data collection.
     final_data = collect_teacher_data_once(
         teacher_model=teacher_model,
         tokenizer=tokenizer,
         dataset=dataset,
-        calculate_reward=combined_calculate_reward,
-        batch_size=2,
-        G=2,
-        device=device, 
+        calculate_reward=integrated_reward,
+        batch_size=args.batch_size,
+        G=args.G,
+        device=device,
         verbose=True,
         generate_single_fn=generate_single_teacher_response
     )
 
-    print("\n=== Final Collected Data ===")
-    for i, item_data in enumerate(final_data):
-        print(f"Item {i} => Original prompt: {item_data['item']['prompt']}")
-        print("  Responses:", item_data["responses"])
-        print("  Teacher logprobs:", item_data["teacher_logprobs"])
-        print("  Rewards:", item_data["rewards"])
-        print()
+    if not final_data:
+        logger.warning("No data collected. Check your dataset and reward function settings.")
+    else:
+        logger.info(f"Collected {len(final_data)} teacher data items.")
 
-    # If 'combined_calculate_reward' returns None for certain items, or if they lack 'prompt',
-    # those items won't appear in final_data.
+    # Save the collected teacher data as JSONL.
+    save_dataset_jsonl(final_data, args.output)
 
 if __name__ == "__main__":
     main()
