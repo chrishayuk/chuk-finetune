@@ -10,7 +10,7 @@ def top_p_generate_torch_with_kvcache(
     model,
     tokenizer,
     prompt: str,
-    max_new_tokens: int = 200,
+    max_new_tokens: int = 512,
     temperature: float = 1.0,
     top_p: float = 0.95,
     stop_sequences=None,
