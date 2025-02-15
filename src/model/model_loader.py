@@ -41,9 +41,9 @@ def load_model_and_tokenizer(
         # Choose default torch_dtype if not provided
         if torch_dtype is None:
             if device_override in ("cuda", "mps"):
-                #torch_dtype = torch.float16
+                torch_dtype = torch.float16
                 #torch_dtype = torch.bfloat16
-                torch_dtype = torch.float32
+                #torch_dtype = torch.float32
             else:
                 torch_dtype = torch.float32
 
@@ -54,8 +54,9 @@ def load_model_and_tokenizer(
             model_name_or_path,
             torch_dtype=torch_dtype,
             device_map="auto",
-            trust_remote_code=True
+            trust_remote_code=True,
         )
+        model.gradient_checkpointing_enable()
         model.eval()
 
         tokenizer = AutoTokenizer.from_pretrained(

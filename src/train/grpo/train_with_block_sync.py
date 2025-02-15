@@ -46,7 +46,7 @@ def train_grpo_block_sync(
     if device == "mlx":
         from train.grpo.mlx.grpo_trainer import GRPOTrainer
         framework = "mlx"
-        trainer_device = True  # or None, depending on how your MLX code handles device
+        trainer_device = "mlx"  # or None, depending on how your MLX code handles device
     else:
         from train.grpo.torch.grpo_trainer import GRPOTrainer
         framework = "torch"

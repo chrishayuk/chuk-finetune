@@ -48,7 +48,7 @@ def grpo_loss(
     loss = clipped_surrogate + kl_term
 
     # 5) Optionally clamp the final (if needed)
-    #     loss = torch.clamp(loss, -1e4, 1e4)  # only if extremely large
+    loss = torch.clamp(loss, -1e4, 1e4)  # only if extremely large
 
     # 6) Reduction
     if reduction == "mean":
