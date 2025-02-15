@@ -42,6 +42,16 @@ def train_grpo_block_sync(
     total_batches_processed = 0
     final_mean_loss, final_mean_reward = 0.0, 0.0
 
+    # 1) Determine framework & device
+    if device == "mlx":
+        from train.grpo.mlx.grpo_trainer import GRPOTrainer
+        framework = "mlx"
+        trainer_device = True  # or None, depending on how your MLX code handles device
+    else:
+        from train.grpo.torch.grpo_trainer import GRPOTrainer
+        framework = "torch"
+        trainer_device = device  # for Torch, might be "cpu", "cuda", etc.
+
     # Helper if you do checkpointing
     def maybe_save_checkpoint(epoch, batch_idx):
         if not checkpoint_dir:
@@ -57,7 +67,7 @@ def train_grpo_block_sync(
         logger.info(f"\n=== Starting Epoch {epoch}/{total_epochs} ===")
 
         # 1) Build the data-loader function
-        data_iter_fn = get_dataloader(device, dataset, batch_size, shuffle=shuffle)
+        data_iter_fn = get_dataloader(framework, dataset, batch_size, shuffle=shuffle)
 
         # 2) Sync the reference model at the start of the epoch
         logger.info("[Sync] Copy base_model -> ref_model at epoch start.")
@@ -83,7 +93,7 @@ def train_grpo_block_sync(
                 epochs=1,            # one pass for this batch
                 batch_size=batch_size,
                 G=G,
-                device=device,
+                device=trainer_device,
                 verbose=verbose,
                 kl_coeff=kl_coeff,
                 as_generator=False

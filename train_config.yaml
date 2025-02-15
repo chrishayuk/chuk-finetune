@@ -38,5 +38,5 @@ stages:
     # Block-sync + checkpoint options
     sync_every_n_batches: 10         # Refresh reference model after 50 mini-batches
     checkpoint_dir: "checkpoints/"   # Directory to save checkpoints
-    checkpoint_every_n_batches: 100  # Save a checkpoint every 100 batches
+    checkpoint_every_n_batches: 20  # Save a checkpoint every 100 batches
     checkpoint_every_n_epochs: 1     # Also save a checkpoint at the end of each epoch
