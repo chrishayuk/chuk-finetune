@@ -17,7 +17,7 @@ def load_model_and_tokenizer(
         import mlx.nn as nn
         from mlx_lm import load as mlx_load
 
-        logger.info("Using MLX. Loading model/tokenizer from %s...", model_name_or_path)
+        logger.debug("Using MLX. Loading model/tokenizer from %s...", model_name_or_path)
         model, tokenizer = mlx_load(model_name_or_path)
 
         # Return (model, tokenizer, True) to indicate MLX usage
@@ -27,7 +27,7 @@ def load_model_and_tokenizer(
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        logger.info("Using Torch. Loading model/tokenizer from %s...", model_name_or_path)
+        logger.debug("Using Torch. Loading model/tokenizer from %s...", model_name_or_path)
 
         # Decide a default device if none passed in
         if device_override is None:
@@ -47,7 +47,7 @@ def load_model_and_tokenizer(
             else:
                 torch_dtype = torch.float32
 
-        logger.info(f"device_override={device_override}, torch_dtype={torch_dtype}")
+        logger.debug(f"device_override={device_override}, torch_dtype={torch_dtype}")
 
         # Use device_map="auto" for Qwen on MPS or multi-GPU
         model = AutoModelForCausalLM.from_pretrained(

@@ -1,7 +1,11 @@
 # src/train/teacher/teacher_model_loader.py
 import logging
-from cli.train.logger_config import logger, color_text, BOLD
+
+# model loading
 from model.model_loader import load_model_and_tokenizer
+
+# setup the logger
+logger = logging.getLogger(__name__)
 
 def load_teacher_model(
     model_name: str,
@@ -23,7 +27,7 @@ def load_teacher_model(
            - tokenizer: The loaded tokenizer object.
            - final_device: "mlx" if it's an MLX model, else device_override or "cpu".
     """
-    logger.info(color_text(f"Loading teacher model & tokenizer: {model_name}", BOLD))
+    logger.debug(f"Loading teacher model & tokenizer: {model_name}")
 
     # 1) Load the teacher model & tokenizer
     teacher_model, tokenizer, is_mlx = load_model_and_tokenizer(
@@ -34,15 +38,22 @@ def load_teacher_model(
     # 2) If it's MLX, we might want to freeze it. (Teacher is typically not updated.)
     #    If Torch, set it to eval. This depends on your typical usage.
     if is_mlx:
-        logger.info("Teacher model is MLX => freeze it.")
+        # put in eval mode (freeze it)
+        logger.debug("Teacher model is MLX => freeze it.")
         teacher_model.freeze()
+        
+        # mlx
         final_device = "mlx"
     else:
-        logger.info("Teacher model is Torch => set to eval mode.")
+        # freeze the model (put in eval mode)
+        logger.debug("Teacher model is Torch => set to eval mode.")
         teacher_model.eval()
         
         # fallback device => user override or 'cpu'
         final_device = device_override or "cpu"
 
-    logger.info(f"Teacher model => final_device={final_device}")
+    # log it
+    logger.debug(f"Teacher model => final_device={final_device}")
+
+    # return the teacher model, tokenizer, final device
     return teacher_model, tokenizer, final_device
