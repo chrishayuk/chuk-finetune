@@ -1,1 +1,1 @@
-python demo_run_teacher_collection.py --model "Qwen/Qwen2.5-3B" --dataset dataset/teacher/input.jsonl --output dataset/teacher/output.jsonl --device cpu --batch_size 2 --G 2
+python teacher_collection_cli.py --model "Qwen/Qwen2.5-3B" --dataset dataset/teacher/input.jsonl --output dataset/teacher/output.jsonl --device cpu --batch_size 2 --G 4
