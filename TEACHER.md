@@ -22,6 +22,14 @@ python student_sft_train_cli.py \
     --max_length 512
 ```
 
+python student_sft_train_cli.py \
+    --student_model_name_or_path "Qwen/Qwen2.5-3B" \
+    --teacher_data_jsonl "dataset/teacher/math_output.jsonl" \
+    --output_dir "./output/math_student" \
+    --num_train_epochs 2 \
+    --batch_size 2 \
+    --max_length 512
+
 ## SFT Fine Tuning
 The following will take regular prompt/completion data and perform a regular fine tune
 
