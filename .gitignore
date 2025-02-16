@@ -14,3 +14,4 @@ wheels/
 # adapters
 adapters/
 checkpoints/
+student_output/
