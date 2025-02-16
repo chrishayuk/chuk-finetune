@@ -9,6 +9,10 @@ python teacher_collection_cli.py --model "Qwen/Qwen2.5-3B" --dataset dataset/tea
 python teacher_collection_cli.py --model "Qwen/Qwen2.5-3B" --dataset dataset/teacher/math.jsonl --output dataset/teacher/math_output.jsonl --device cpu --batch_size 2 --G 4
 ```
 
+```bash
+python teacher_collection_cli.py --model "Qwen/Qwen2.5-3B" --dataset dataset/teacher/limericks.jsonl --output dataset/teacher/limericks_output.jsonl --device cpu --batch_size 2 --G 4
+```
+
 ## Student Fine Tuning
 The following will take the outputted data from a teacher model and train on that data
 
@@ -65,3 +69,12 @@ or
 ```bash
 python infer_student.py --model_path "./sft_output" --prompt "Calculate 50 - 123." --stop_word "</verifier_answer>" --include_stop_word
 ```
+
+python sft_train_cli.py \
+  --model_name_or_path "Qwen/Qwen2.5-3B" \
+  --sft_data_jsonl "dataset/coldstart/math_completions.jsonl" \
+  --output_dir "./sft_output" \
+  --num_train_epochs 2 \
+  --batch_size 2 \
+  --max_length 512 \
+  --learning_rate 5e-5
