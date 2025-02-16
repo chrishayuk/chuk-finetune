@@ -42,5 +42,5 @@ python infer_student.py --model_path "./student_output" --prompt "Calculate 50 -
 or
 
 ```bash
-python infer_student.py --model_path "./sft_output" --prompt "Calculate 50 - 123."
+python infer_student.py --model_path "./sft_output" --prompt "Calculate 50 - 123." --stop_word "</verifier_answer>" --include_stop_word
 ```
