@@ -5,6 +5,10 @@ The following will collect data from a teacher model and save to a jsonl file fo
 python teacher_collection_cli.py --model "Qwen/Qwen2.5-3B" --dataset dataset/teacher/input.jsonl --output dataset/teacher/output.jsonl --device cpu --batch_size 2 --G 4
 ```
 
+```bash
+python teacher_collection_cli.py --model "Qwen/Qwen2.5-3B" --dataset dataset/teacher/math.jsonl --output dataset/teacher/math_output.jsonl --device cpu --batch_size 2 --G 4
+```
+
 ## Student Fine Tuning
 The following will take the outputted data from a teacher model and train on that data
 
@@ -31,6 +35,15 @@ python sft_train_cli.py \
   --max_length 512 \
   --learning_rate 5e-5
 ```
+
+python sft_train_cli.py \
+  --model_name_or_path "Qwen/Qwen2.5-3B" \
+  --sft_data_jsonl "dataset/teacher/math.jsonl" \
+  --output_dir "./output/math_sft" \
+  --num_train_epochs 2 \
+  --batch_size 2 \
+  --max_length 512 \
+  --learning_rate 5e-5
 
 ## Infer
 The following will infer the saved model

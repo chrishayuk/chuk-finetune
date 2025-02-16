@@ -16,3 +16,4 @@ adapters/
 checkpoints/
 student_output/
 sft_output/
+output/
