@@ -1,37 +1,43 @@
+import argparse
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 def main():
-    # The directory where your fine-tuned model was saved by run_student_sft.py
-    model_path = "./student_output"
+    parser = argparse.ArgumentParser(
+        description="Load a fine-tuned model (student or SFT) and generate text from a prompt."
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        required=True,
+        help="Path to the fine-tuned model directory (e.g., './student_output' or './sft_output')."
+    )
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        default="Work out 50 - 123 and display the answer.",
+        help="Input prompt to be provided to the model."
+    )
+    args = parser.parse_args()
 
-    print(f"Loading the fine-tuned model and tokenizer from '{model_path}'...")
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(model_path)
+    print(f"Loading the fine-tuned model and tokenizer from '{args.model_path}'...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    model = AutoModelForCausalLM.from_pretrained(args.model_path)
 
-    # If you have a GPU:
+    # Move model to GPU if available
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
 
-    # Example prompt (adapt to your training style)
-    prompt = (
-        "Work out 50 - 123 and display the answer. "
-    )
+    # Tokenize the prompt
+    inputs = tokenizer(args.prompt, return_tensors="pt").to(device)
 
-    # Tokenize
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-
-    # Generate
+    # Generate output
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=100,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9
+            max_new_tokens=512
         )
 
-    # Decode
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
     print("\n=== MODEL OUTPUT ===")
     print(generated_text)

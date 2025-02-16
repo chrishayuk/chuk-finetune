@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-student_sft_cli.py
+student_sft_train_cli.py
 
 A simple script to fine-tune ("student training") a model using teacher-collected data.
 
